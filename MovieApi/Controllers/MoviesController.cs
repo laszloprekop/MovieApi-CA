@@ -96,13 +96,13 @@ public class MoviesController(IUnitOfWork iuw, MovieContext context) : Controlle
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateMovie(int id, MovieUpdateDto dto)
     {
-        var movie = await context.Movies.FindAsync(id);
+        var movie = await iuw.Movies.GetAsync(id);
         if (movie is null) return NotFound();
         movie.Title = dto.Title;
         movie.Year = dto.Year;
         movie.Genre = dto.Genre;
         movie.Duration = dto.Duration;
-        await context.SaveChangesAsync();
+        await iuw.CompleteAsync();
         return NoContent();
     }
 
