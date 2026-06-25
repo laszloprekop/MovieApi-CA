@@ -268,21 +268,201 @@ builder.Services.AddSingleton<IUnitOfWork, UnitOfWork>();  // ← mistake: a sin
 
 Swap the controller's direct `MovieContext` use for `IUnitOfWork`. Behaviour stays identical — this is brief **Del 3**.
 
+> **New concept: the strangler refactor.** Rather than a risky big-bang swap of every
+> method at once, inject **both** dependencies temporarily — `IUnitOfWork iuw` *and*
+> `MovieContext context` — then migrate one endpoint per sub-step. The app compiles and
+> runs the *whole* time; you watch each endpoint move and confirm it still behaves before
+> touching the next. The old dependency is removed only once nothing uses it (9.7). This
+> is the disciplined way to refactor production code, and it's how you build muscle memory:
+> small change → `dotnet build` → `dotnet run` → observe → commit.
+>
+> Two consequences of the **minimal** `IMovieRepository` you'll feel here:
+> 1. `GetAsync(id)` is `FindAsync` under the hood — it loads the entity but **no
+>    navigations**, and `GetAllAsync()` returns an already-materialised `IEnumerable<Movie>`
+>    (no `.Include`). So the old SQL-side projections become in-memory mapping. Correct,
+>    slightly less efficient; the projection concern is re-homed to the service layer later.
+> 2. `GetMovieDetails` needs `Details`/`Reviews`/`Actors` eager-loaded, which the thin
+>    interface can't express — so 9.6 **adds one repository method**. Growing the repo to
+>    fit a real query is normal (more methods arrive in Steps 22–24); it isn't a smell.
+
+> **Sub-step naming:** the on-disk controller calls the injected UoW `iuw`; later steps in
+> this doc call it `uow`. Same dependency — don't let the rename trip you up.
+
+**9.1 — Repair the constructor (transitional dual dependency).** Delete the broken second
+constructor and the `_context` field; take both dependencies on the primary constructor;
+rename `_context` → `context` throughout; and fix the `GetMovies` build bug
+(`GetAllAsync()` returns `IEnumerable<Movie>`, so the EF-only `ToListAsync()` must become
+LINQ-to-Objects `ToList()`, with no `await`).
+
 ```csharp
 // MovieApi/Controllers/MoviesController.cs
-public class MoviesController(IUnitOfWork uow) : ControllerBase   // was (MovieContext context)
+public class MoviesController(IUnitOfWork iuw, MovieContext context) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies()
+    public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(
+        [FromQuery] string? genre, [FromQuery] int? year, [FromQuery] string? actor)
     {
-        var movies = await uow.Movies.GetAllAsync();
-        return Ok(movies.Select(m => new MovieDto { /* map as before */ }));
+        var query = await iuw.Movies.GetAllAsync();
+        if (!string.IsNullOrWhiteSpace(genre)) query = query.Where(m => m.Genre == genre);
+        if (year is not null) query = query.Where(m => m.Year == year);
+        if (!string.IsNullOrWhiteSpace(actor)) query = query.Where(m => m.Actors.Any(a => a.Name == actor));
+
+        var movies = query.Select(m => new MovieDto
+        {
+            Id = m.Id, Title = m.Title, Year = m.Year, Genre = m.Genre, Duration = m.Duration
+        }).ToList();
+        return Ok(movies);
     }
-    // ... GetMovie/Create/Update/Delete now go through uow.Movies + uow.CompleteAsync() ...
+    // GetMovie/Details/Create/Update/Delete still use `context` for now — migrated in 9.2–9.6.
 }
 ```
 
-**Verify:** `dotnet run`; `GET /api/movies` and `POST /api/movies` behave exactly as before — but no `DbContext` in the controller.
+> ⚠️ **Known limitation introduced here:** the `?actor=` filter now runs in memory over
+> `GetAllAsync()`, which loads **no** `Actors` — so it silently returns nothing. The `genre`
+> and `year` filters still work. Restore the actor filter by adding `.Include(m => m.Actors)`
+> to the repository's `GetAllAsync()`, or leave it until filtering moves into the service
+> layer (Step 22). Flag it; don't let it surprise you.
+
+**Verify:** `dotnet build` green; `dotnet run`; `GET /api/movies` and `?genre=…&year=…` match Övning 3.
+
+**9.2 — Migrate `GetMovie(id)`.** Load the entity through the UoW, then map in memory.
+
+```csharp
+[HttpGet("{id:int}")]
+public async Task<ActionResult<MovieDto>> GetMovie(int id)
+{
+    var movie = await iuw.Movies.GetAsync(id);
+    if (movie is null) return NotFound();
+    return Ok(new MovieDto
+    {
+        Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration
+    });
+}
+```
+
+**Verify:** `dotnet run`; `GET /api/movies/1` → same DTO; `GET /api/movies/9999` → 404.
+
+**9.3 — Migrate `CreateMovie`.** `context.Movies.Add` → `iuw.Movies.Add`; `SaveChangesAsync` → `iuw.CompleteAsync`.
+
+```csharp
+[HttpPost]
+public async Task<ActionResult<MovieDto>> CreateMovie(MovieCreateDto dto)
+{
+    var movie = new Movie { Title = dto.Title, Year = dto.Year, Genre = dto.Genre, Duration = dto.Duration };
+    iuw.Movies.Add(movie);
+    await iuw.CompleteAsync();
+    var result = new MovieDto
+    {
+        Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration
+    };
+    return CreatedAtAction(nameof(GetMovie), new { id = movie.Id }, result);
+}
+```
+
+**Verify:** `dotnet run`; `POST /api/movies` → 201 + `Location` header; the new id round-trips via `GetMovie`.
+
+**9.4 — Migrate `UpdateMovie`.** `FindAsync` → `GetAsync`; `SaveChangesAsync` → `CompleteAsync`.
+
+```csharp
+[HttpPut("{id:int}")]
+public async Task<IActionResult> UpdateMovie(int id, MovieUpdateDto dto)
+{
+    var movie = await iuw.Movies.GetAsync(id);
+    if (movie is null) return NotFound();
+    movie.Title = dto.Title;
+    movie.Year = dto.Year;
+    movie.Genre = dto.Genre;
+    movie.Duration = dto.Duration;
+    await iuw.CompleteAsync();
+    return NoContent();
+}
+```
+
+> **Why no `iuw.Movies.Update(movie)` call?** `GetAsync` (→ `FindAsync`) returns a **tracked**
+> entity, so EF's change tracker already sees your property edits; `CompleteAsync` writes
+> them. `Update()` is only needed for *detached* entities (e.g. one rebuilt from a DTO).
+
+**Verify:** `dotnet run`; `PUT /api/movies/1` mutates the row; a follow-up `GET` shows the change.
+
+**9.5 — Migrate `DeleteMovie`.** `FindAsync` → `GetAsync`; `Remove`; `CompleteAsync`.
+
+```csharp
+[HttpDelete("{id:int}")]
+public async Task<IActionResult> DeleteMovie(int id)
+{
+    var movie = await iuw.Movies.GetAsync(id);
+    if (movie is null) return NotFound();
+    iuw.Movies.Remove(movie); // cascade delete Reviews and MovieDetails
+    await iuw.CompleteAsync();
+    return NoContent();
+}
+```
+
+**Verify:** `dotnet run`; `DELETE /api/movies/{id}` → 204; a second `DELETE` → 404.
+
+**9.6 — Migrate `GetMovieDetails` (grow the repository).** This endpoint needs navigations
+the minimal interface can't load, so add one method.
+
+```csharp
+// MovieCore/DomainContracts/IMovieRepository.cs   (add)
+Task<Movie?> GetWithDetailsAsync(int id);
+```
+
+```csharp
+// MovieData/Repositories/MovieRepository.cs   (add; needs `using Microsoft.EntityFrameworkCore;`)
+public Task<Movie?> GetWithDetailsAsync(int id) =>
+    context.Movies
+        .Include(m => m.Details)
+        .Include(m => m.Reviews)
+        .Include(m => m.Actors)
+        .FirstOrDefaultAsync(m => m.Id == id);
+```
+
+```csharp
+// MovieApi/Controllers/MoviesController.cs
+[HttpGet("{id:int}/details")]
+public async Task<ActionResult<MovieDetailDto>> GetMovieDetails(int id)
+{
+    var movie = await iuw.Movies.GetWithDetailsAsync(id);
+    if (movie is null) return NotFound();
+
+    var dto = new MovieDetailDto
+    {
+        Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration,
+        Synopsis = movie.Details?.Synopsis,
+        Language = movie.Details?.Language,
+        Budget = movie.Details?.Budget ?? 0,
+        Reviews = movie.Reviews.Select(r => new ReviewDto
+        {
+            Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating
+        }).ToList(),
+        Actors = movie.Actors.Select(a => new ActorDto
+        {
+            Id = a.Id, Name = a.Name, BirthYear = a.BirthYear
+        }).ToList()
+    };
+    return Ok(dto);
+}
+```
+
+> **Behaviour nuance:** Övning 3 projected in SQL, so a movie with no `Details` yielded
+> `null` columns harmlessly. Loading the entity then writing `movie.Details!.Synopsis`
+> would throw a `NullReferenceException` for such a movie — so the mapping above uses `?.`
+> and a `?? 0` fallback. Match the null-shape of `MovieDetailDto`'s properties to your DTO.
+
+**Verify:** `dotnet run`; `GET /api/movies/1/details` returns details, reviews, and actors as before.
+
+**9.7 — Drop `MovieContext` from the controller.** Nothing references `context` now, so remove
+the constructor parameter and the two usings that only served it (`using MovieData;` and
+`using Microsoft.EntityFrameworkCore;` — the controller no longer issues EF calls directly).
+
+```csharp
+public class MoviesController(IUnitOfWork iuw) : ControllerBase   // ← MovieContext gone
+```
+
+**Verify:** `dotnet build` green; `dotnet run` — every Movies endpoint behaves as before;
+`grep -n "MovieContext" MovieApi/Controllers/MoviesController.cs` returns nothing. The
+controller now reaches data **only** through `IUnitOfWork`.
 **Commit:** `refactor(api): route MoviesController through IUnitOfWork`
 
 ### Step 10: Add Review and Actor repositories
