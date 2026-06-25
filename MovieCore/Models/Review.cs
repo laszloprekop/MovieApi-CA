@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace MovieApi.Models
+namespace MovieCore.Models
 {
     public class Review
     {

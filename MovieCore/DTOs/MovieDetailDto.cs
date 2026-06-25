@@ -1,6 +1,6 @@
-﻿using MovieApi.Models;
+﻿using MovieCore.Models;
 
-namespace MovieApi.DTOs
+namespace MovieCore.DTOs
 {
     public class MovieDetailDto
     {

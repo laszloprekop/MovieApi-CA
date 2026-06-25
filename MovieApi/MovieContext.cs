@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using MovieApi.Models;
+using MovieCore.Models;
 
 public class MovieContext(DbContextOptions<MovieContext> options) : DbContext(options)
 {

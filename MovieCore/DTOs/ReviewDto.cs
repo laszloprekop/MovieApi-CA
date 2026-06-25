@@ -1,4 +1,4 @@
-﻿namespace MovieApi.DTOs
+﻿namespace MovieCore.DTOs
 {
     public class ReviewDto
     {
