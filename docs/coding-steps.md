@@ -467,10 +467,121 @@ controller now reaches data **only** through `IUnitOfWork`.
 
 ### Step 10: Add Review and Actor repositories
 
-Repeat steps 5–7 for the remaining entities, then expose them on the UoW. (The interfaces go in `MovieCore.DomainContracts`, the implementations in `MovieData.Repositories`.)
+Repeat steps 5–7 for the remaining entities, expose them on the UoW, then re-wire
+`ReviewsController` and `ActorsController` through `iuw`. (Interfaces go in
+`MovieCore.DomainContracts`, implementations in `MovieData.Repositories`.)
+
+> **Sequencing note:** the build stays **red** until the two controller rewrites (10.7–10.8)
+> land — the repository/UoW parts alone can't satisfy a controller still calling `context`.
+> Add all six parts, then build. (`ReviewsController` may already reference `iuw.Reviews`
+> speculatively; that's the gap this step closes.)
+>
+> **Shape choices:** reviews are always reached *through a movie*, so `IReviewRepository`
+> is built around `GetByMovieIdAsync` rather than a generic `GetAll`. Actors are a top-level
+> resource with their own endpoints, so `IActorRepository` mirrors the full CRUD shape of
+> `IMovieRepository`.
+
+**10.1 — `IReviewRepository`** (new file).
 
 ```csharp
-// MovieCore/DomainContracts/IUnitOfWork.cs   (extend)
+// MovieCore/DomainContracts/IReviewRepository.cs
+namespace MovieCore.DomainContracts;
+using MovieCore.Models;
+
+public interface IReviewRepository
+{
+    Task<IEnumerable<Review>> GetByMovieIdAsync(int movieId);
+    Task<Review?> GetAsync(int id);
+    void Add(Review review);
+    void Remove(Review review);
+}
+```
+
+**10.2 — `ReviewRepository`** (new file).
+
+```csharp
+// MovieData/Repositories/ReviewRepository.cs
+using Microsoft.EntityFrameworkCore;
+using MovieCore.DomainContracts;
+using MovieCore.Models;
+
+namespace MovieData.Repositories;
+
+public class ReviewRepository(MovieContext context) : IReviewRepository
+{
+    public async Task<IEnumerable<Review>> GetByMovieIdAsync(int movieId) =>
+        await context.Reviews.Where(r => r.MovieId == movieId).ToListAsync();
+
+    public Task<Review?> GetAsync(int id) => context.Reviews.FindAsync(id).AsTask();
+
+    public void Add(Review review) => context.Reviews.Add(review);
+    public void Remove(Review review) => context.Reviews.Remove(review);
+}
+```
+
+**10.3 — `IActorRepository`** (new file).
+
+```csharp
+// MovieCore/DomainContracts/IActorRepository.cs
+namespace MovieCore.DomainContracts;
+using MovieCore.Models;
+
+public interface IActorRepository
+{
+    Task<IEnumerable<Actor>> GetAllAsync();
+    Task<Actor?> GetAsync(int id);
+    Task<bool> AnyAsync(int id);
+    void Add(Actor actor);
+    void Update(Actor actor);
+    void Remove(Actor actor);
+}
+```
+
+**10.4 — `ActorRepository`** (new file).
+
+```csharp
+// MovieData/Repositories/ActorRepository.cs
+using Microsoft.EntityFrameworkCore;
+using MovieCore.DomainContracts;
+using MovieCore.Models;
+
+namespace MovieData.Repositories;
+
+public class ActorRepository(MovieContext context) : IActorRepository
+{
+    public async Task<IEnumerable<Actor>> GetAllAsync() => await context.Actors.ToListAsync();
+
+    public Task<Actor?> GetAsync(int id) => context.Actors.FindAsync(id).AsTask();
+
+    public Task<bool> AnyAsync(int id) => context.Actors.AnyAsync(a => a.Id == id);
+
+    public void Add(Actor actor) => context.Actors.Add(actor);
+    public void Update(Actor actor) => context.Actors.Update(actor);
+    public void Remove(Actor actor) => context.Actors.Remove(actor);
+}
+```
+
+**10.5 — Grow the Movie repository.** `AddActorToMovie` needs a movie with its `Actors`
+loaded — `GetAsync` (FindAsync) loads no navigations. Add a focused method (same idea as
+`GetWithDetailsAsync` from 9.6).
+
+```csharp
+// MovieCore/DomainContracts/IMovieRepository.cs   (add)
+Task<Movie?> GetWithActorsAsync(int movieId);
+```
+
+```csharp
+// MovieData/Repositories/MovieRepository.cs   (add; `using Microsoft.EntityFrameworkCore;` already present)
+public Task<Movie?> GetWithActorsAsync(int movieId) =>
+    context.Movies.Include(m => m.Actors).FirstOrDefaultAsync(m => m.Id == movieId);
+```
+
+**10.6 — Expose the repositories on the Unit of Work.**
+
+```csharp
+// MovieCore/DomainContracts/IUnitOfWork.cs
+namespace MovieCore.DomainContracts;
+
 public interface IUnitOfWork
 {
     IMovieRepository Movies { get; }
@@ -480,9 +591,170 @@ public interface IUnitOfWork
 }
 ```
 
-Re-wire `ReviewsController` and `ActorsController` to use `uow` too.
+```csharp
+// MovieData/Repositories/UnitOfWork.cs
+namespace MovieData.Repositories;
+using MovieCore.DomainContracts;
 
-**Verify:** `dotnet run`; all three controllers work through the UoW; no `DbContext` references remain in `Controllers/`.
+public class UnitOfWork(MovieContext context) : IUnitOfWork
+{
+    public IMovieRepository Movies { get; } = new MovieRepository(context);
+    public IReviewRepository Reviews { get; } = new ReviewRepository(context);
+    public IActorRepository Actors { get; } = new ActorRepository(context);
+    public Task CompleteAsync() => context.SaveChangesAsync();
+}
+```
+
+> **No new DI registration needed.** The repositories are constructed *inside* `UnitOfWork`,
+> all sharing its one `MovieContext` — one context, one transaction per request. `Program.cs`
+> only knows `IUnitOfWork` (registered scoped in Step 8); it never sees the individual
+> repositories.
+
+**10.7 — Rewire `ReviewsController`** (drop `MovieContext`; the EF/`MovieData` usings go too).
+
+```csharp
+// MovieApi/Controllers/ReviewsController.cs
+using Microsoft.AspNetCore.Mvc;
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Models;
+
+namespace MovieApi.Controllers;
+
+[ApiController]
+[Route("api")]
+public class ReviewsController(IUnitOfWork iuw) : ControllerBase
+{
+    // GET: api/movies/{movieId}/reviews
+    [HttpGet("movies/{movieId}/reviews")]
+    public async Task<ActionResult<IEnumerable<ReviewDto>>> GetReviews(int movieId)
+    {
+        if (!await iuw.Movies.AnyAsync(movieId)) return NotFound();
+
+        var reviews = await iuw.Reviews.GetByMovieIdAsync(movieId);
+        return Ok(reviews.Select(r => new ReviewDto
+        {
+            Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating
+        }).ToList());
+    }
+
+    // POST: api/movies/{movieId}/reviews
+    [HttpPost("movies/{movieId:int}/reviews")]
+    public async Task<ActionResult<ReviewDto>> CreateReview(int movieId, ReviewDto dto)
+    {
+        if (!await iuw.Movies.AnyAsync(movieId)) return NotFound();
+
+        var review = new Review
+        {
+            MovieId = movieId,
+            ReviewerName = dto.ReviewerName,
+            Comment = dto.Comment,
+            Rating = dto.Rating
+        };
+        iuw.Reviews.Add(review);
+        await iuw.CompleteAsync();
+        dto.Id = review.Id;
+        return CreatedAtAction(nameof(GetReviews), new { movieId }, dto);
+    }
+
+    // DELETE /api/reviews/{id}
+    [HttpDelete("reviews/{id:int}")]
+    public async Task<ActionResult> DeleteReview(int id)
+    {
+        var review = await iuw.Reviews.GetAsync(id);
+        if (review is null) return NotFound();
+
+        iuw.Reviews.Remove(review);
+        await iuw.CompleteAsync();
+        return NoContent();
+    }
+}
+```
+
+**10.8 — Rewire `ActorsController`** (straight to `IUnitOfWork`-only — every method maps
+cleanly). The N:M add uses `iuw.Movies.GetWithActorsAsync` + `iuw.Actors.GetAsync`.
+
+```csharp
+// MovieApi/Controllers/ActorsController.cs
+using Microsoft.AspNetCore.Mvc;
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Models;
+
+namespace MovieApi.Controllers;
+
+[ApiController]
+[Route("api")]
+public class ActorsController(IUnitOfWork iuw) : ControllerBase
+{
+    // GET: api/actors
+    [HttpGet("actors")]
+    public async Task<ActionResult<IEnumerable<ActorDto>>> GetActors()
+    {
+        var actors = await iuw.Actors.GetAllAsync();
+        return Ok(actors.Select(a => new ActorDto { Id = a.Id, Name = a.Name, BirthYear = a.BirthYear }).ToList());
+    }
+
+    // GET /api/actors/{id}
+    [HttpGet("actors/{id:int}")]
+    public async Task<ActionResult<ActorDto>> GetActor(int id)
+    {
+        var actor = await iuw.Actors.GetAsync(id);
+        return actor is null
+            ? NotFound()
+            : Ok(new ActorDto { Id = actor.Id, Name = actor.Name, BirthYear = actor.BirthYear });
+    }
+
+    // POST /api/actors
+    [HttpPost("actors")]
+    public async Task<ActionResult<ActorDto>> CreateActor(ActorDto dto)
+    {
+        var actor = new Actor { Name = dto.Name, BirthYear = dto.BirthYear };
+        iuw.Actors.Add(actor);
+        await iuw.CompleteAsync();
+        dto.Id = actor.Id;   // ← was missing before; the returned body now carries the new id
+        return CreatedAtAction(nameof(GetActor), new { id = actor.Id }, dto);
+    }
+
+    // PUT /api/actors/{id}
+    [HttpPut("actors/{id:int}")]
+    public async Task<ActionResult> UpdateActor(int id, ActorDto dto)
+    {
+        var actor = await iuw.Actors.GetAsync(id);
+        if (actor is null) return NotFound();
+        actor.Name = dto.Name;
+        actor.BirthYear = dto.BirthYear;
+        await iuw.CompleteAsync();   // tracked entity → no iuw.Actors.Update(...) needed (cf. Movie 9.4)
+        return NoContent();
+    }
+
+    // POST /api/movies/{movieId}/actors/{actorId} — add actor to movie, N:M
+    [HttpPost("movies/{movieId:int}/actors/{actorId:int}")]
+    public async Task<IActionResult> AddActorToMovie(int movieId, int actorId)
+    {
+        var movie = await iuw.Movies.GetWithActorsAsync(movieId);
+        if (movie is null) return NotFound($"Movie with id {movieId} not found.");
+
+        var actor = await iuw.Actors.GetAsync(actorId);
+        if (actor is null) return NotFound($"Actor with id {actorId} not found.");
+
+        if (movie.Actors.Any(a => a.Id == actorId))
+            return Conflict($"Actor with id {actorId} is already in movie with id {movieId}.");
+
+        movie.Actors.Add(actor);
+        await iuw.CompleteAsync();
+        return NoContent();
+    }
+}
+```
+
+> **Two intentional deviations from a byte-for-byte copy:** `CreateActor` now sets `dto.Id`
+> before returning (it previously returned `id: 0`), and `GetReviews` checks movie existence
+> *before* fetching. Both are behaviour-preserving-or-better.
+
+**Verify:** `dotnet build` green; `dotnet run`; all three controllers work through the UoW;
+`POST /api/movies/1/actors/2` → 204, repeat → 409; `grep -rn "MovieContext" MovieApi/Controllers/`
+returns nothing (assuming 9.7 is done on `MoviesController`).
 **Commit:** `refactor(api): route all controllers through IUnitOfWork`
 
 ### Step 11: Add the service-layer projects and wire references
