@@ -82,9 +82,9 @@ public class MoviesController(IUnitOfWork iuw, MovieContext context) : Controlle
             Genre = dto.Genre,
             Duration = dto.Duration
         };
-        context.Movies.Add(movie);
-        await context.SaveChangesAsync();
-        var result = new MovieDto()
+        iuw.Movies.Add(movie);
+        await iuw.CompleteAsync();
+        var result = new MovieDto
         {
             Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration
         };
