@@ -110,11 +110,11 @@ public class MoviesController(IUnitOfWork iuw, MovieContext context) : Controlle
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteMovie(int id)
     {
-        var movie = await context.Movies.FindAsync(id);
+        var movie = await iuw.Movies.GetAsync(id);
         if (movie is null) return NotFound();
 
-        context.Movies.Remove(movie); // cascade delete Reviews and MovieDetails
-        await context.SaveChangesAsync();
+        iuw.Movies.Remove(movie); // cascade delete Reviews and MovieDetails
+        await iuw.CompleteAsync();
 
         return NoContent();
     }
