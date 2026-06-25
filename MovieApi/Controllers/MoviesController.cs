@@ -9,7 +9,7 @@ namespace MovieApi.Controllers;
 
 [ApiController]
 [Route("api/movies")]
-public class MoviesController(IUnitOfWork iuw, MovieContext context) : ControllerBase
+public class MoviesController(IUnitOfWork iuw) : ControllerBase
 {
     // GET: api/movies
     [HttpGet]
