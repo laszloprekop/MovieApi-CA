@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using MovieCore.DomainContracts;
 using MovieCore.DTOs;
 using MovieCore.Models;
 using MovieData;
@@ -8,11 +9,8 @@ namespace MovieApi.Controllers;
 
 [ApiController]
 [Route("api/movies")]
-public class MoviesController : ControllerBase
+public class MoviesController(IUnitOfWork iuw, MovieContext context) : ControllerBase
 {
-    private readonly MovieContext _context;
-    public MoviesController(MovieContext context) => _context = context;
-
     // GET: api/movies
     [HttpGet]
     public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(
@@ -20,17 +18,17 @@ public class MoviesController : ControllerBase
         [FromQuery] int? year,
         [FromQuery] string? actor)
     {
-        var query = _context.Movies.AsQueryable();
+        var query = await iuw.Movies.GetAllAsync();
 
         if (!string.IsNullOrWhiteSpace(genre)) query = query.Where(m => m.Genre == genre);
         if (year is not null) query = query.Where(m => m.Year == year);
         if (!string.IsNullOrWhiteSpace(actor)) query = query.Where(m => m.Actors.Any(a => a.Name == actor));
 
-        var movies = await query
+        var movies = query
             .Select(m => new MovieDto
             {
                 Id = m.Id, Title = m.Title, Year = m.Year, Genre = m.Genre, Duration = m.Duration
-            }).ToListAsync();
+            }).ToList();
         return Ok(movies);
     }
 
@@ -38,22 +36,21 @@ public class MoviesController : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<ActionResult<MovieDto>> GetMovie(int id)
     {
-        var movie = await _context.Movies.Where(m => m.Id == id)
-            .Select(m => new MovieDto()
-            {
-                Id = m.Id, Title = m.Title, Year = m.Year, Genre = m.Genre, Duration = m.Duration
-            }).FirstOrDefaultAsync();
+        var movie = await iuw.Movies.GetAsync(id);
 
         if (movie is null) return NotFound();
 
-        return Ok(movie);
+        return Ok(new MovieDto
+        {
+            Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration
+        });
     }
 
     // GET /api/movies/{id}/details
     [HttpGet("{id:int}/details")]
     public async Task<ActionResult<MovieDetailDto>> GetMovieDetails(int id)
     {
-        var dto = await _context.Movies
+        var dto = await context.Movies
             .Where(m => m.Id == id)
             .Select(m => new MovieDetailDto
             {
@@ -85,8 +82,8 @@ public class MoviesController : ControllerBase
             Genre = dto.Genre,
             Duration = dto.Duration
         };
-        _context.Movies.Add(movie);
-        await _context.SaveChangesAsync();
+        context.Movies.Add(movie);
+        await context.SaveChangesAsync();
         var result = new MovieDto()
         {
             Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration
@@ -99,13 +96,13 @@ public class MoviesController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateMovie(int id, MovieUpdateDto dto)
     {
-        var movie = await _context.Movies.FindAsync(id);
+        var movie = await context.Movies.FindAsync(id);
         if (movie is null) return NotFound();
         movie.Title = dto.Title;
         movie.Year = dto.Year;
         movie.Genre = dto.Genre;
         movie.Duration = dto.Duration;
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
         return NoContent();
     }
 
@@ -113,11 +110,11 @@ public class MoviesController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteMovie(int id)
     {
-        var movie = await _context.Movies.FindAsync(id);
+        var movie = await context.Movies.FindAsync(id);
         if (movie is null) return NotFound();
 
-        _context.Movies.Remove(movie); // cascade delete Reviews and MovieDetails
-        await _context.SaveChangesAsync();
+        context.Movies.Remove(movie); // cascade delete Reviews and MovieDetails
+        await context.SaveChangesAsync();
 
         return NoContent();
     }
