@@ -1,4 +1,10 @@
+using Microsoft.EntityFrameworkCore;
+using MovieApi.Extensions;
+
 var builder = WebApplication.CreateBuilder(args);
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
+builder.Services.AddDbContext<MovieContext>(options => options.UseSqlServer(connectionString));
 
 // Add services to the container.
 
@@ -19,5 +25,7 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.SeedData();
 
 app.Run();

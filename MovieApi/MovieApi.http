@@ -1,5 +1,136 @@
-@MovieApi_HostAddress = http://localhost:5102
+@MovieApi_HostAddress = http://localhost:5239
 
+### GET all movies
+GET {{MovieApi_HostAddress}}/api/movies
+Accept: application/json
 
+###
+
+### GET all movies with genre filter
+GET {{MovieApi_HostAddress}}/api/movies?genre=Drama
+Accept: application/json
+
+###
+
+### GET all movies with year filter
+GET {{MovieApi_HostAddress}}/api/movies?year=1994
+Accept: application/json
+
+###
+
+### GET all movies with actor filter
+GET {{MovieApi_HostAddress}}/api/movies?actor=Tom%20Hanks
+Accept: application/json
+
+###
+
+### GET all movies with multiple filters
+GET {{MovieApi_HostAddress}}/api/movies?genre=Drama&year=1994&actor=Tom%20Hanks
+Accept: application/json
+
+###
+
+### GET movie by id
+GET {{MovieApi_HostAddress}}/api/movies/1
+Accept: application/json
+
+###
+
+### GET movie details by id
+GET {{MovieApi_HostAddress}}/api/movies/1/details
+Accept: application/json
+
+###
+
+### POST create new movie
+POST {{MovieApi_HostAddress}}/api/movies
+Content-Type: application/json
+
+{
+  "title": "The Shawshank Redemption",
+  "year": 1994,
+  "genre": "Drama",
+  "duration": 142
+}
+
+###
+
+### PUT update movie
+PUT {{MovieApi_HostAddress}}/api/movies/1
+Content-Type: application/json
+
+{
+  "title": "Forrest Gump Updated",
+  "year": 1994,
+  "genre": "Drama",
+  "duration": 142
+}
+
+###
+
+### DELETE movie
+DELETE {{MovieApi_HostAddress}}/api/movies/1
+
+###
+
+### GET all actors
+GET {{MovieApi_HostAddress}}/api/actors
+Accept: application/json
+
+###
+
+### GET actor by id
+GET {{MovieApi_HostAddress}}/api/actors/1
+Accept: application/json
+
+###
+
+### POST create new actor
+POST {{MovieApi_HostAddress}}/api/actors
+Content-Type: application/json
+
+{
+  "name": "Tom Hanks",
+  "birthYear": 1956
+}
+
+###
+
+### PUT update actor
+PUT {{MovieApi_HostAddress}}/api/actors/1
+Content-Type: application/json
+
+{
+  "name": "Tom Hanks",
+  "birthYear": 1956
+}
+
+###
+
+### POST add actor to movie (N:M)
+POST {{MovieApi_HostAddress}}/api/movies/1/actors/1
+
+###
+
+### GET reviews for a movie
+GET {{MovieApi_HostAddress}}/api/movies/1/reviews
+Accept: application/json
+
+###
+
+### POST create review for a movie
+POST {{MovieApi_HostAddress}}/api/movies/1/reviews
+Content-Type: application/json
+
+{
+  "reviewerName": "Jane Doe",
+  "comment": "A timeless classic.",
+  "rating": 5
+}
+
+###
+
+### DELETE review
+DELETE {{MovieApi_HostAddress}}/api/reviews/1
 
 ###
