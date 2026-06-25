@@ -69,7 +69,7 @@ Content-Type: application/json
 ###
 
 ### DELETE movie
-DELETE {{MovieApi_HostAddress}}/api/movies/1
+DELETE {{MovieApi_HostAddress}}/api/movies/2
 
 ###
 

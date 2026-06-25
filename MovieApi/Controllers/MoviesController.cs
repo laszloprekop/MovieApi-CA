@@ -48,26 +48,26 @@ public class MoviesController(IUnitOfWork iuw, MovieContext context) : Controlle
 
     // GET /api/movies/{id}/details
     [HttpGet("{id:int}/details")]
-    public async Task<ActionResult<MovieDetailDto>> GetMovieDetails(int id)
+    public async Task<ActionResult<MovieDetailDto>> GetMovieDetailsAsync(int id)
     {
-        var dto = await context.Movies
-            .Where(m => m.Id == id)
-            .Select(m => new MovieDetailDto
+        var movie = await iuw.Movies.GetWithDetailsAsync(id);
+        if (movie is null) return NotFound();
+        
+        var dto = new MovieDetailDto
+        {
+            Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration,
+            Synopsis = movie.Details?.Synopsis,
+            Language = movie.Details?.Language,
+            Budget = movie.Details?.Budget ?? 0,
+            Reviews = movie.Reviews.Select(r => new ReviewDto
             {
-                Id = m.Id, Title = m.Title, Year = m.Year, Genre = m.Genre, Duration = m.Duration,
-                Synopsis = m.Details!.Synopsis,
-                Language = m.Details.Language,
-                Budget = m.Details.Budget,
-                Reviews = m.Reviews.Select(r => new ReviewDto
-                {
-                    Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating
-                }).ToList(),
-                Actors = m.Actors.Select(a => new ActorDto
-                {
-                    Id = a.Id, Name = a.Name, BirthYear = a.BirthYear
-                }).ToList()
-            }).FirstOrDefaultAsync();
-        if (dto is null) return NotFound();
+                Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating
+            }).ToList(),
+            Actors = movie.Actors.Select(a => new ActorDto
+            {
+                Id = a.Id, Name = a.Name, BirthYear = a.BirthYear
+            }).ToList()
+        };
         return Ok(dto);
     }
 
