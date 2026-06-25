@@ -83,7 +83,18 @@ Update every `using MovieApi.Models;` / `using MovieApi.DTOs;` (in the controlle
 
 ### Step 4: Move the DbContext and seed into MovieData, then re-wire DI
 
-Move `MovieContext.cs` and `Extensions/SeedDataExtensions.cs` into `MovieData`, give them a namespace, and confirm `Program.cs` still finds them.
+> **New concept: the dependency rule, enforced by the compiler.** `MovieData` is a
+> plain class library (`Microsoft.NET.Sdk`) — it has **no** reference to ASP.NET Core.
+> The moment you move code into it, anything that reached "outward" to the web host
+> stops compiling. That's not a bug to route around; it's the architecture telling you
+> the data layer was coupled to the host. Fix the coupling, don't grant the data layer
+> access to the web framework.
+
+Do this in four parts; each one fixes the error the previous one exposes. Build after
+each part so you see the error count drop.
+
+**4a — Move `MovieContext.cs` into `MovieData` and namespace it.** In Övning 3 it had
+no namespace (so it sat in the global namespace and everything saw it for free).
 
 ```csharp
 // MovieData/MovieContext.cs   (was MovieApi/MovieContext.cs — it had no namespace)
@@ -99,14 +110,58 @@ public class MovieContext(DbContextOptions<MovieContext> options) : DbContext(op
 }
 ```
 
+**4b — Move `Extensions/SeedDataExtensions.cs` into `MovieData` and break the host coupling.**
+It was an extension on `WebApplication` (lives in `Microsoft.AspNetCore.Builder` — invisible
+to a class library). Retarget it to `IServiceProvider`, which the data layer *is* allowed to
+know about (the DI abstractions ship transitively with EF Core). Add the explicit
+`using` — the web SDK gave it to you implicitly, a class library does not.
+
+```csharp
+// MovieData/Extensions/SeedDataExtensions.cs
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;   // ← add: CreateScope / GetRequiredService
+using MovieCore.Models;
+
+namespace MovieData.Extensions;
+
+public static class SeedDataExtensions
+{
+    public static void SeedData(this IServiceProvider services)   // was: this WebApplication app
+    {
+        using var scope = services.CreateScope();                 // was: app.Services.CreateScope()
+        // ... rest of the method unchanged ...
+    }
+}
+```
+
+> ⚠️ Do **not** "fix" this by adding `<FrameworkReference Include="Microsoft.AspNetCore.App" />`
+> to `MovieData.csproj`. That makes your inner layer depend on the web framework — the exact
+> coupling Clean Architecture exists to prevent.
+
+**4c — Re-wire `Program.cs`.** Hand the host's service provider to the seeder, and add the
+usings for the relocated types.
+
 ```csharp
 // MovieApi/Program.cs   (add the new usings near the top)
 using MovieData;
 using MovieData.Extensions;   // wherever SeedDataExtensions landed
 // ... AddDbContext<MovieContext>(...) is unchanged ...
+
+app.Services.SeedData();   // was: app.SeedData();
 ```
 
-**Verify:** `dotnet run --project MovieApi` boots; `GET /api/movies` returns the same data as Övning 3. **The skeleton walks.**
+**4d — Fix the controllers.** `MovieContext` now lives in `MovieData`, so each controller
+that injects it (`MoviesController`, `ActorsController`, `ReviewsController`) needs the using.
+
+```csharp
+// MovieApi/Controllers/*.cs   (add to the using block of all three)
+using MovieData;
+```
+
+**Verify:** `dotnet build` → 0 warnings, 0 errors; `dotnet run --project MovieApi` boots;
+`GET /api/movies` returns the same data as Övning 3. **The skeleton walks.**
+(If your IDE still shows red squiggles after a clean CLI build — even on `WebApplication` —
+its project model is stale: reload the solution / invalidate caches. The build is the truth.)
 **Commit:** `chore(data): move DbContext and seeding into MovieData`
 
 ---

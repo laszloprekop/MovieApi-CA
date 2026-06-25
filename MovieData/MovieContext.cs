@@ -1,3 +1,5 @@
+namespace MovieData ;
+
 using Microsoft.EntityFrameworkCore;
 using MovieCore.Models;
 

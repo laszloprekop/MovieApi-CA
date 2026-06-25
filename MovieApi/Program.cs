@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using MovieApi.Extensions;
+using MovieData;
+using MovieData.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
@@ -26,6 +27,6 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-app.SeedData();
+app.Services.SeedData();
 
 app.Run();

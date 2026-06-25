@@ -1,13 +1,14 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using MovieCore.Models;
 
-namespace MovieApi.Extensions;
+namespace MovieData.Extensions;
 
 public static class SeedDataExtensions
 {
-    public static void SeedData(this WebApplication app)
+    public static void SeedData(this IServiceProvider services)
     {
-        using var scope = app.Services.CreateScope();
+        using var scope = services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<MovieContext>();
         context.Database.Migrate();
         if (context.Movies.Any()) return; // already seeded, idempotency guard

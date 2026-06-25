@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using MovieCore.DTOs;
 using MovieCore.Models;
+using MovieData;
 
 namespace MovieApi.Controllers;
 
@@ -55,7 +56,7 @@ public class ReviewsController : ControllerBase
     {
         var review = await _context.Reviews.FindAsync(id);
         if (review is null) return NotFound();
-        
+
         _context.Reviews.Remove(review);
         await _context.SaveChangesAsync();
         return NoContent();
