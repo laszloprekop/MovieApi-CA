@@ -1,15 +1,13 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using MovieCore.DomainContracts;
 using MovieCore.DTOs;
 using MovieCore.Models;
-using MovieData;
 
 namespace MovieApi.Controllers;
 
 [ApiController]
 [Route("api")]
-public class ReviewsController(IUnitOfWork iuw, MovieContext context) : ControllerBase
+public class ReviewsController(IUnitOfWork iuw) : ControllerBase
 {
     // GET: api/movies/{movieId}/reviews
     [HttpGet("movies/{movieId}/reviews")]
