@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using MovieCore.DomainContracts;
 using MovieCore.DTOs;
 using MovieCore.Models;
 using MovieData;
@@ -8,26 +9,25 @@ namespace MovieApi.Controllers;
 
 [ApiController]
 [Route("api")]
-public class ActorsController : ControllerBase
+public class ActorsController(IUnitOfWork iuw) : ControllerBase
 {
-    private readonly MovieContext _context;
-    public ActorsController(MovieContext context) => _context = context;
-
     // GET: api/actors
     [HttpGet("actors")]
-    public async Task<ActionResult<IEnumerable<ActorDto>>> GetActors() =>
-        Ok(await _context.Actors
-            .Select(a => new ActorDto { Id = a.Id, Name = a.Name, BirthYear = a.BirthYear })
-            .ToListAsync());
+    public async Task<ActionResult<IEnumerable<ActorDto>>> GetActors()
+    {
+        var actors = await iuw.Actors.GetAllAsync();
+        return Ok(actors
+            .Select(a => new ActorDto { Id = a.Id, Name = a.Name, BirthYear = a.BirthYear }).ToList());
+    }
 
     // GET /api/actors/{id}
     [HttpGet("actors/{id:int}")]
     public async Task<ActionResult<ActorDto>> GetActor(int id)
     {
-        var actor = await _context.Actors.Where(a => a.Id == id)
-            .Select(a => new ActorDto { Id = a.Id, Name = a.Name, BirthYear = a.BirthYear })
-            .FirstOrDefaultAsync();
-        return actor is null ? NotFound() : Ok(actor);
+        var actor = await iuw.Actors.GetAsync(id);
+        return actor is null
+            ? NotFound()
+            : Ok(new ActorDto { Id = actor.Id, Name = actor.Name, BirthYear = actor.BirthYear });
     }
 
     // Post /api/actors
@@ -35,8 +35,9 @@ public class ActorsController : ControllerBase
     public async Task<ActionResult<ActorDto>> CreateActor(ActorDto dto)
     {
         var actor = new Actor { Name = dto.Name, BirthYear = dto.BirthYear };
-        _context.Actors.Add(actor);
-        await _context.SaveChangesAsync();
+        iuw.Actors.Add(actor);
+        await iuw.CompleteAsync();
+        dto.Id = actor.Id;
         return CreatedAtAction(nameof(GetActor), new { id = actor.Id }, dto);
     }
 
@@ -44,11 +45,11 @@ public class ActorsController : ControllerBase
     [HttpPut("actors/{id:int}")]
     public async Task<ActionResult> UpdateActor(int id, ActorDto dto)
     {
-        var actor = await _context.Actors.FindAsync(id);
+        var actor = await iuw.Actors.GetAsync(id);
         if (actor is null) return NotFound();
         actor.Name = dto.Name;
         actor.BirthYear = dto.BirthYear;
-        await _context.SaveChangesAsync();
+        await iuw.CompleteAsync();
         return NoContent();
     }
 
@@ -56,17 +57,18 @@ public class ActorsController : ControllerBase
     [HttpPost("movies/{movieId:int}/actors/{actorId:int}")]
     public async Task<IActionResult> AddActorToMovie(int movieId, int actorId)
     {
-        var movie = await _context.Movies.Include(m => m.Actors).FirstOrDefaultAsync(m => m.Id == movieId);
+        var movie = await iuw.Movies.GetWithActorAsync(movieId);
         if (movie is null) return NotFound($"Movie with id {movieId} not found.");
 
-        var actor = await _context.Actors.FindAsync(actorId);
+        var actor = await iuw.Actors.GetAsync(actorId);
         if (actor is null) return NotFound($"Actor with id {actorId} not found.");
 
-        if (movie.Actors.Any(a => a.Id == actorId)) return 
-            Conflict($"Actor with id {actorId} is already in movie with id {movieId}.");
+        if (movie.Actors.Any(a => a.Id == actorId))
+            return
+                Conflict($"Actor with id {actorId} is already in movie with id {movieId}.");
 
         movie.Actors.Add(actor);
-        await _context.SaveChangesAsync();
+        await iuw.CompleteAsync();
         return NoContent();
     }
 }
