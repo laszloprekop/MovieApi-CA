@@ -18,7 +18,7 @@ public class MovieRepository(MovieContext context) : IMovieRepository
         .Include(m => m.Actors)
         .FirstOrDefaultAsync(m => m.Id == id);
     
-    public Task<Movie?> GetWithActorAsync(int MovieId) => context.Movies.Include(m => m.Actors).FirstOrDefaultAsync(m => m.Id == MovieId);
+    public Task<Movie?> GetWithActorsAsync(int MovieId) => context.Movies.Include(m => m.Actors).FirstOrDefaultAsync(m => m.Id == MovieId);
 
     public void Add(Movie movie) => context.Movies.Add(movie);
     public void Update(Movie movie) => context.Movies.Update(movie);

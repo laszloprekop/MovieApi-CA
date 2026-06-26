@@ -55,7 +55,7 @@ public class ActorService(IUnitOfWork uow) : IActorService
 
     public async Task AddToMovieAsync(int movieId, int actorId)
     {
-        var movie = await uow.Movies.GetWithActorAsync(movieId)
+        var movie = await uow.Movies.GetWithActorsAsync(movieId)
                     ?? throw new NotFoundException($"Movie {movieId} not found");
         var actor = await uow.Actors.GetAsync(actorId)
                     ?? throw new NotFoundException($"Actor {actorId} not found");
