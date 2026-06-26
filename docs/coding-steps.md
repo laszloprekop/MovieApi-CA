@@ -986,39 +986,84 @@ runs and just logs the dev warning until you add it.
 
 ### Step 14: Add the exception hierarchy and IExceptionHandler
 
-> **New concept: `IExceptionHandler` + `ProblemDetails`.** Services can't call `NotFound()`. They throw domain exceptions; one handler maps each to a status code + `ProblemDetails` body (ADR 0003). This is brief **Del 9**, set up early so services can throw from day one.
+> **New concept: `IExceptionHandler` + `ProblemDetails`.** Services can't call `NotFound()` —
+> that's an MVC concern they have no access to. Instead they **throw** domain exceptions, and
+> one centralized handler maps each exception type to a status code + `ProblemDetails` body
+> (ADR 0003). This is brief **Del 9**, set up early so services can throw from day one.
+
+**14.1 — The exception hierarchy.** One sealed type per outcome, all under a common abstract
+base so the handler can switch on them.
 
 ```csharp
 // MovieCore/Exceptions/DomainException.cs
 namespace MovieCore.Exceptions;
+
 public abstract class DomainException(string message) : Exception(message);
 public sealed class NotFoundException(string message) : DomainException(message);
 public sealed class BusinessRuleException(string message) : DomainException(message);
 ```
 
+**14.2 — The handler.** This is a **full class implementing `IExceptionHandler`** — not a
+loose method. Type the whole thing, including the class declaration and the `using`s.
+
 ```csharp
-// MovieApi/ExceptionHandling/DomainExceptionHandler.cs   (implements IExceptionHandler)
-public async ValueTask<bool> TryHandleAsync(HttpContext ctx, Exception ex, CancellationToken ct)
+// MovieApi/ExceptionHandling/DomainExceptionHandler.cs
+using Microsoft.AspNetCore.Diagnostics;   // ← where IExceptionHandler lives (NOT an implicit using)
+using MovieCore.Exceptions;
+
+namespace MovieApi.ExceptionHandling;
+
+public sealed class DomainExceptionHandler : IExceptionHandler
 {
-    var status = ex switch
+    public async ValueTask<bool> TryHandleAsync(
+        HttpContext context, Exception exception, CancellationToken cancellationToken)
     {
-        NotFoundException     => StatusCodes.Status404NotFound,
-        BusinessRuleException => StatusCodes.Status400BadRequest,
-        _                     => StatusCodes.Status500InternalServerError,
-    };
-    await Results.Problem(detail: ex.Message, statusCode: status).ExecuteAsync(ctx);
-    return true;
+        var status = exception switch
+        {
+            NotFoundException     => StatusCodes.Status404NotFound,
+            BusinessRuleException => StatusCodes.Status400BadRequest,
+            _                     => StatusCodes.Status500InternalServerError,
+        };
+        await Results.Problem(detail: exception.Message, statusCode: status).ExecuteAsync(context);
+        return true;
+    }
 }
 ```
 
+> ⚠️ **`TryHandleAsync` must sit inside the class — it is not a top-level method.** If you drop
+> the method straight into the namespace (no `class ... : IExceptionHandler` around it), the
+> compiler emits a confusing cascade that all means the same thing:
+> - *"The modifier 'async' is not valid for this item"*
+> - *"Top-level statements must precede namespace and type declarations"*
+> - *"The 'await' expression can only be used in a method ... marked async"*
+> - *"Cannot convert expression type 'bool' to return type 'ValueTask<bool>'"*
+> - *"Local function 'TryHandleAsync' is never used"*
+>
+> The fix for **every** one of those is: wrap the method in the class above. Also note
+> `IExceptionHandler` is in `Microsoft.AspNetCore.Diagnostics`, which the Web SDK does **not**
+> add implicitly — hence the explicit `using`. (`HttpContext`, `Results`, `StatusCodes` *are*
+> implicit, so they need no `using`.)
+
+**14.3 — Wire it into DI and the pipeline.** Two service registrations (before `Build()`) and
+one middleware call (after). `AddProblemDetails()` gives the standardized JSON body shape;
+`UseExceptionHandler()` (no args) activates the registered `IExceptionHandler`(s). Put the
+middleware **early** so it catches exceptions from everything downstream.
+
 ```csharp
 // MovieApi/Program.cs
+using MovieApi.ExceptionHandling;   // for DomainExceptionHandler
+
+// --- with the other builder.Services.* registrations, before builder.Build() ---
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
 builder.Services.AddProblemDetails();
-// ... after build: app.UseExceptionHandler();
+
+// --- in the pipeline, right after var app = builder.Build(); ---
+app.UseExceptionHandler();   // before UseHttpsRedirection / MapControllers
 ```
 
-**Verify:** `dotnet run`; hitting a not-yet-handled path returns a `ProblemDetails` JSON body, not a stack trace.
+**Verify:** `dotnet build` is green. There's nothing throwing domain exceptions yet (services
+arrive in Step 15+), so the real proof comes then: a thrown `NotFoundException` surfaces as a
+**404 `ProblemDetails` JSON body**, not a 500 stack trace.
 **Commit:** `feat(api): map domain exceptions to ProblemDetails`
 
 ### Step 15: Stub the Movie service, its contract, and IServiceManager
