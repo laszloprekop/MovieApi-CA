@@ -1335,9 +1335,298 @@ public class MoviesController(IServiceManager services) : ControllerBase
 
 ### Step 19: Repeat the service slice for Reviews and Actors
 
-Apply steps 15–18 to `IReviewService`/`ReviewService` and `IActorService`/`ActorService`, add them to `IServiceManager`, and move their controllers into `MoviePresentation`.
+Exactly the Step-18 shape, applied twice. As there, the one-line "repeat steps 15–18" hides
+that your real `ReviewsController` (3 routes) and `ActorsController` (5 routes) each need a
+full service surface. After this, **`MovieApi` holds no controllers at all** — every route
+lives in `MoviePresentation` and talks only to `IServiceManager`.
 
-**Verify:** `dotnet run`; all endpoints work end-to-end through the service layer; `MovieApi` now contains no controllers.
+> **Mapping choice:** `MovieService` used `IMapper` (a `Movie→MovieDto` map exists). Reviews
+> and Actors have **no** profile, so these two services **hand-map** (just like Step 18's
+> details) and take **only `IUnitOfWork`** in their constructors — no `IMapper`. That keeps
+> Step 19 free of new AutoMapper maps (and away from the `AssertConfigurationIsValid()` check
+> your `Program.cs` runs at startup).
+
+**19.1 — `IReviewService` + `ReviewService`.** "Movie missing" / "review missing" become
+thrown `NotFoundException` (→ 404 `ProblemDetails`).
+
+```csharp
+// MovieContracts/IReviewService.cs
+using MovieCore.DTOs;
+
+namespace MovieContracts;
+
+public interface IReviewService
+{
+    Task<IEnumerable<ReviewDto>> GetByMovieAsync(int movieId);
+    Task<ReviewDto> CreateAsync(int movieId, ReviewDto dto);
+    Task DeleteAsync(int id);
+}
+```
+
+```csharp
+// MovieServices/ReviewService.cs
+using MovieContracts;
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Exceptions;
+using MovieCore.Models;
+
+namespace MovieServices;
+
+public class ReviewService(IUnitOfWork uow) : IReviewService
+{
+    public async Task<IEnumerable<ReviewDto>> GetByMovieAsync(int movieId)
+    {
+        if (!await uow.Movies.AnyAsync(movieId))
+            throw new NotFoundException($"Movie {movieId} not found");
+
+        var reviews = await uow.Reviews.GetByMovieIdAsync(movieId);
+        return reviews.Select(r => new ReviewDto
+        {
+            Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating
+        }).ToList();
+    }
+
+    public async Task<ReviewDto> CreateAsync(int movieId, ReviewDto dto)
+    {
+        if (!await uow.Movies.AnyAsync(movieId))
+            throw new NotFoundException($"Movie {movieId} not found");
+
+        var review = new Review
+        {
+            MovieId = movieId,
+            ReviewerName = dto.ReviewerName,
+            Comment = dto.Comment,
+            Rating = dto.Rating
+        };
+        uow.Reviews.Add(review);
+        await uow.CompleteAsync();
+        dto.Id = review.Id;
+        return dto;
+    }
+
+    public async Task DeleteAsync(int id)
+    {
+        var review = await uow.Reviews.GetAsync(id)
+                     ?? throw new NotFoundException($"Review {id} not found");
+        uow.Reviews.Remove(review);
+        await uow.CompleteAsync();
+    }
+}
+```
+
+**19.2 — `IActorService` + `ActorService`.** The N:M "add actor to movie" carries the
+existence checks and the duplicate guard.
+
+```csharp
+// MovieContracts/IActorService.cs
+using MovieCore.DTOs;
+
+namespace MovieContracts;
+
+public interface IActorService
+{
+    Task<IEnumerable<ActorDto>> GetAllAsync();
+    Task<ActorDto> GetAsync(int id);
+    Task<ActorDto> CreateAsync(ActorDto dto);
+    Task UpdateAsync(int id, ActorDto dto);
+    Task AddToMovieAsync(int movieId, int actorId);
+}
+```
+
+```csharp
+// MovieServices/ActorService.cs
+using MovieContracts;
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Exceptions;
+using MovieCore.Models;
+
+namespace MovieServices;
+
+public class ActorService(IUnitOfWork uow) : IActorService
+{
+    public async Task<IEnumerable<ActorDto>> GetAllAsync()
+    {
+        var actors = await uow.Actors.GetAllAsync();
+        return actors.Select(a => new ActorDto { Id = a.Id, Name = a.Name, BirthYear = a.BirthYear }).ToList();
+    }
+
+    public async Task<ActorDto> GetAsync(int id)
+    {
+        var actor = await uow.Actors.GetAsync(id)
+                    ?? throw new NotFoundException($"Actor {id} not found");
+        return new ActorDto { Id = actor.Id, Name = actor.Name, BirthYear = actor.BirthYear };
+    }
+
+    public async Task<ActorDto> CreateAsync(ActorDto dto)
+    {
+        var actor = new Actor { Name = dto.Name, BirthYear = dto.BirthYear };
+        uow.Actors.Add(actor);
+        await uow.CompleteAsync();
+        dto.Id = actor.Id;
+        return dto;
+    }
+
+    public async Task UpdateAsync(int id, ActorDto dto)
+    {
+        var actor = await uow.Actors.GetAsync(id)
+                    ?? throw new NotFoundException($"Actor {id} not found");
+        actor.Name = dto.Name;
+        actor.BirthYear = dto.BirthYear;
+        await uow.CompleteAsync();
+    }
+
+    public async Task AddToMovieAsync(int movieId, int actorId)
+    {
+        var movie = await uow.Movies.GetWithActorsAsync(movieId)
+                    ?? throw new NotFoundException($"Movie {movieId} not found");
+        var actor = await uow.Actors.GetAsync(actorId)
+                    ?? throw new NotFoundException($"Actor {actorId} not found");
+
+        if (movie.Actors.Any(a => a.Id == actorId))
+            throw new BusinessRuleException($"Actor {actorId} is already in movie {movieId}");
+
+        movie.Actors.Add(actor);
+        await uow.CompleteAsync();
+    }
+}
+```
+
+> ⚠️ **Repo method name:** this calls `uow.Movies.GetWithActorsAsync` (plural). If your repo
+> from Step 10 named it `GetWithActorAsync` (singular), make the interface, the implementation,
+> and this call all agree — rename to the plural to match this doc. Mismatched names are a
+> compile error, not a runtime one, so the build will tell you immediately.
+
+**19.3 — Extend the facade.** Add the two services to `IServiceManager` and construct them
+lazily in `ServiceManager`. Note `ReviewService`/`ActorService` get only `uow` (no `mapper`).
+
+```csharp
+// MovieContracts/IServiceManager.cs
+namespace MovieContracts;
+
+public interface IServiceManager
+{
+    IMovieService MovieService { get; }
+    IReviewService ReviewService { get; }
+    IActorService ActorService { get; }
+}
+```
+
+```csharp
+// MovieServices/ServiceManager.cs
+using AutoMapper;
+using MovieContracts;
+using MovieCore.DomainContracts;
+
+namespace MovieServices;
+
+public class ServiceManager(IUnitOfWork uow, IMapper mapper) : IServiceManager
+{
+    private readonly Lazy<IMovieService>  _movie  = new(() => new MovieService(uow, mapper));
+    private readonly Lazy<IReviewService> _review = new(() => new ReviewService(uow));
+    private readonly Lazy<IActorService>  _actor  = new(() => new ActorService(uow));
+
+    public IMovieService  MovieService  => _movie.Value;
+    public IReviewService ReviewService => _review.Value;
+    public IActorService  ActorService  => _actor.Value;
+}
+```
+
+**19.4 — Move both controllers into `MoviePresentation`** (thin pass-throughs), then **delete
+the originals** from `MovieApi/Controllers/`. Same shrunken `using` block as Step 18.
+
+```csharp
+// MoviePresentation/Controllers/ReviewsController.cs
+using Microsoft.AspNetCore.Mvc;
+using MovieContracts;
+using MovieCore.DTOs;
+
+namespace MoviePresentation.Controllers;
+
+[ApiController]
+[Route("api")]
+public class ReviewsController(IServiceManager services) : ControllerBase
+{
+    [HttpGet("movies/{movieId:int}/reviews")]
+    public async Task<ActionResult<IEnumerable<ReviewDto>>> GetReviews(int movieId)
+        => Ok(await services.ReviewService.GetByMovieAsync(movieId));
+
+    [HttpPost("movies/{movieId:int}/reviews")]
+    public async Task<ActionResult<ReviewDto>> CreateReview(int movieId, ReviewDto dto)
+    {
+        var created = await services.ReviewService.CreateAsync(movieId, dto);
+        return CreatedAtAction(nameof(GetReviews), new { movieId }, created);
+    }
+
+    [HttpDelete("reviews/{id:int}")]
+    public async Task<IActionResult> DeleteReview(int id)
+    {
+        await services.ReviewService.DeleteAsync(id);
+        return NoContent();
+    }
+}
+```
+
+```csharp
+// MoviePresentation/Controllers/ActorsController.cs
+using Microsoft.AspNetCore.Mvc;
+using MovieContracts;
+using MovieCore.DTOs;
+
+namespace MoviePresentation.Controllers;
+
+[ApiController]
+[Route("api")]
+public class ActorsController(IServiceManager services) : ControllerBase
+{
+    [HttpGet("actors")]
+    public async Task<ActionResult<IEnumerable<ActorDto>>> GetActors()
+        => Ok(await services.ActorService.GetAllAsync());
+
+    [HttpGet("actors/{id:int}")]
+    public async Task<ActionResult<ActorDto>> GetActor(int id)
+        => Ok(await services.ActorService.GetAsync(id));
+
+    [HttpPost("actors")]
+    public async Task<ActionResult<ActorDto>> CreateActor(ActorDto dto)
+    {
+        var created = await services.ActorService.CreateAsync(dto);
+        return CreatedAtAction(nameof(GetActor), new { id = created.Id }, created);
+    }
+
+    [HttpPut("actors/{id:int}")]
+    public async Task<IActionResult> UpdateActor(int id, ActorDto dto)
+    {
+        await services.ActorService.UpdateAsync(id, dto);
+        return NoContent();
+    }
+
+    [HttpPost("movies/{movieId:int}/actors/{actorId:int}")]
+    public async Task<IActionResult> AddActorToMovie(int movieId, int actorId)
+    {
+        await services.ActorService.AddToMovieAsync(movieId, actorId);
+        return NoContent();
+    }
+}
+```
+
+```bash
+# delete the old copies so MovieApi hosts no controllers and routes don't collide
+rm MovieApi/Controllers/ReviewsController.cs MovieApi/Controllers/ActorsController.cs
+```
+
+> **Behaviour shifts (intended, both ADR-0003 house style):**
+> - Missing ids on reviews/actors now return **404 `ProblemDetails`** (via `NotFoundException`),
+>   not a bare `NotFound()`.
+> - "Actor already in movie" now returns **400 `BusinessRuleException`** instead of the old
+>   `409 Conflict` — this aligns with how Step 23 treats the duplicate-actor rule. (If you'd
+>   rather keep a true 409, add a `ConflictException` to the hierarchy and map it in the handler.)
+
+**Verify:** `dotnet build` is green; `dotnet run` — all Movies/Reviews/Actors routes work
+end-to-end through the service layer; `MovieApi/Controllers/` is empty; `POST /api/movies/1/actors/2`
+→ 204, repeat → 400 `ProblemDetails`;
+`grep -rn "DbContext\|UnitOfWork\|IMapper\|MovieData" MoviePresentation/` returns nothing.
 **Commit:** `refactor(presentation): move Review and Actor controllers behind IServiceManager`
 
 ### Step 20: Normalise Genre into a many-to-many relationship
