@@ -22,6 +22,7 @@ builder.Services.AddControllers().AddApplicationPart(typeof(MoviePresentation.Pr
 builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
 builder.Services.AddProblemDetails();
+builder.Services.AddScoped<IMovieRepository, MovieRepository>();
 
 var app = builder.Build();
 app.UseExceptionHandler();

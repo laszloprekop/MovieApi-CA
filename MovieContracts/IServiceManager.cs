@@ -2,5 +2,5 @@
 
 public interface IServiceManager
 {
-    IMovieService Movies { get; }
+    IMovieService MovieService { get; }
 }
