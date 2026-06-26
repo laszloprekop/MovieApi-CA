@@ -8,6 +8,7 @@ public interface IMovieRepository
     Task<Movie?> GetAsync(int id);
     Task<bool> AnyAsync(int id);
     Task<Movie?> GetWithDetailsAsync(int id);
+    Task<Movie?> GetWithActorAsync(int MovieId);
     void Add(Movie movie);
     void Update(Movie movie);
     void Remove(Movie movie);

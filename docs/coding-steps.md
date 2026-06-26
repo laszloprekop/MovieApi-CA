@@ -759,19 +759,65 @@ returns nothing (assuming 9.7 is done on `MoviesController`).
 
 ### Step 11: Add the service-layer projects and wire references
 
-> **New concept: the Clean split.** Controllers should depend on *interfaces*, not on data access. We introduce three projects (brief **Del 8**) so the references form the Clean shape. `MovieApi` (composition root) is the one project allowed to reference the concrete `MovieData`.
+> **New concept: the Clean split.** Controllers should depend on *interfaces*, not on data
+> access. We introduce three projects (brief **Del 8**) so the references form the Clean
+> shape. `MovieApi` (the composition root) is the one project allowed to reference the
+> concrete `MovieData`.
+
+This step is pure scaffolding — no C# to type, just project creation and reference wiring.
+The projects are **empty** for now; controllers and services move into them over Steps 12–19.
+The payoff is the *reference graph*: once it's right, the compiler physically prevents a
+controller from touching `MovieData`.
+
+> **The four projects and why each reference exists:**
+> - **MovieContracts** → `MovieCore` only. Holds service interfaces + `IServiceManager`; it
+>   speaks in DTOs/entities (Core) and knows nothing about implementations.
+> - **MovieServices** → `MovieCore` + `MovieContracts`. Implements the interfaces, so it needs
+>   both the contracts it fulfils and the domain types it works with.
+> - **MoviePresentation** → `MovieContracts` only. Controllers depend on the `IServiceManager`
+>   abstraction — **not** on `MovieServices`, `MovieData`, or `IMapper`. This is the hard rule.
+> - **MovieApi** → `MoviePresentation` + `MovieServices` (+ already `MovieData`). The composition
+>   root is the *only* place allowed to see every concrete layer, because it's where DI wires
+>   interfaces to implementations.
+
+**11.1 — Create the three projects and add them to the solution.** (Commands are identical
+in PowerShell; `dotnet` is cross-platform and forward slashes are fine.)
 
 ```bash
-dotnet new classlib -n MovieContracts -f net10.0
-dotnet new classlib -n MovieServices  -f net10.0
-dotnet new classlib -n MoviePresentation -f net10.0   # see next step for the SDK note
+dotnet new classlib -n MovieContracts    -f net10.0
+dotnet new classlib -n MovieServices     -f net10.0
+dotnet new classlib -n MoviePresentation -f net10.0   # SDK stays Microsoft.NET.Sdk; Step 12 adds the FrameworkReference
 dotnet sln add MovieContracts MovieServices MoviePresentation
-
-dotnet add MovieContracts/MovieContracts.csproj   reference MovieCore/MovieCore.csproj
-dotnet add MovieServices/MovieServices.csproj     reference MovieCore/MovieCore.csproj MovieContracts/MovieContracts.csproj
-dotnet add MoviePresentation/MoviePresentation.csproj reference MovieContracts/MovieContracts.csproj
-dotnet add MovieApi/MovieApi.csproj reference MoviePresentation/MoviePresentation.csproj MovieServices/MovieServices.csproj
 ```
+
+**11.2 — Delete the default `Class1.cs` stubs.** `dotnet new classlib` drops an empty
+`Class1.cs` in each project; remove all three so they don't linger as dead files.
+
+```bash
+rm MovieContracts/Class1.cs MovieServices/Class1.cs MoviePresentation/Class1.cs
+```
+
+**11.3 — Wire the references (inner rings first).**
+
+```bash
+dotnet add MovieContracts/MovieContracts.csproj       reference MovieCore/MovieCore.csproj
+dotnet add MovieServices/MovieServices.csproj         reference MovieCore/MovieCore.csproj MovieContracts/MovieContracts.csproj
+dotnet add MoviePresentation/MoviePresentation.csproj reference MovieContracts/MovieContracts.csproj
+dotnet add MovieApi/MovieApi.csproj                   reference MoviePresentation/MoviePresentation.csproj MovieServices/MovieServices.csproj
+```
+
+**11.4 — Verify the dependency graph, not just the build.** A green build only proves it
+compiles; the architecture lives in *who references whom*. Confirm `MovieData` is referenced
+by exactly one project:
+
+```bash
+dotnet build                                          # six projects, 0 errors
+grep -rl "MovieData" --include=*.csproj .             # → only MovieApi/MovieApi.csproj
+```
+
+> **Sanity check the shape:** `MoviePresentation.csproj` should list **only**
+> `MovieContracts` as a project reference. If it somehow references `MovieServices` or
+> `MovieData`, the Clean split is already leaking — fix it now, before controllers move in.
 
 **Verify:** `dotnet build` — six projects compile; the only project referencing `MovieData` is `MovieApi`.
 **Commit:** `chore(solution): add Contracts/Services/Presentation projects`
