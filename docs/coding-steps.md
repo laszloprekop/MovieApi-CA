@@ -885,12 +885,40 @@ its route responds instead of 404 — confirming the application part is wired.
 
 ### Step 13: Add AutoMapper and a Movie profile
 
-> **New concept: AutoMapper.** Maps entities ↔ DTOs from a profile. Profiles live in `MovieData`; services consume `IMapper`.
+> **New concept: AutoMapper.** Maps entities ↔ DTOs from declarative *profiles* instead of
+> the hand-written `new MovieDto { Id = m.Id, ... }` you've been doing in the controllers.
+> Profiles live in `MovieData`; services consume the `IMapper` it registers.
+
+**13.1 — Add the package.** It goes in two projects: `MovieData` (because the `Profile`
+subclass lives there) and `MovieApi` (because the `AddAutoMapper` DI extension is called
+there).
 
 ```bash
-dotnet add MovieData/MovieData.csproj package AutoMapper
-dotnet add MovieApi/MovieApi.csproj   package AutoMapper   # for the DI registration
+dotnet add MovieData/MovieData.csproj package AutoMapper --version 16.1.1
+dotnet add MovieApi/MovieApi.csproj   package AutoMapper --version 16.1.1   # for the DI registration
 ```
+
+> **Why pin to `16.1.1`?** Two constraints collide. AutoMapper went **commercial** at v14
+> (Lucky Penny Software) — the runtime is free for development/testing but logs a license
+> warning and wants a key for production. Meanwhile every version **< 15.1.1** (including the
+> last MIT release, `13.0.1`) carries a **high-severity advisory** — CVE-2026-32933, CVSS 7.5:
+> uncontrolled recursion on a deeply-nested *circular* graph triggers an uncatchable
+> `StackOverflowException` that crashes the whole process (DoS). The fix exists only in
+> `15.1.1` / `16.1.1`. So there is **no free *and* patched version** — take the patched one
+> (`16.1.1`) and add a free community license key (see 13.3). Verify with
+> `dotnet build`: `16.1.1` shows **no** `NU1903` advisory warning; `13.0.1` does.
+>
+> **Forward note:** `MovieServices` will also need this package the moment `MovieService`
+> takes an `IMapper` (Step 15). Add it then — or now — but don't be surprised by the
+> "`IMapper` not found" error at Step 15 if you skip it.
+
+**13.2 — Write the Movie profile.** `Movie → MovieDto` is a pure **name match** (`Id`, `Title`,
+`Year`, `Genre`, `Duration`), so AutoMapper wires it by convention. `MovieCreateDto → Movie`
+is the opposite case: the entity has members the DTO can't supply (`Id` is DB-generated;
+`Details`/`Reviews`/`Actors` are navigations). AutoMapper leaves them at defaults *at runtime*,
+but `AssertConfigurationIsValid()` will **throw** on those unmapped destination members — so
+declare the omission explicitly with `.Ignore()`. That keeps the config validatable and the
+intent self-documenting.
 
 ```csharp
 // MovieData/Mapping/MovieProfile.cs
@@ -904,17 +932,56 @@ public class MovieProfile : Profile
     public MovieProfile()
     {
         CreateMap<Movie, MovieDto>();
-        CreateMap<MovieCreateDto, Movie>();
+
+        // Movie's Id is DB-generated and its navigations are populated by EF / later
+        // business logic — not from the create DTO. Ignore them so the config is
+        // validation-clean (AssertConfigurationIsValid) and the intent is explicit.
+        CreateMap<MovieCreateDto, Movie>()
+            .ForMember(d => d.Id, o => o.Ignore())
+            .ForMember(d => d.Details, o => o.Ignore())
+            .ForMember(d => d.Reviews, o => o.Ignore())
+            .ForMember(d => d.Actors, o => o.Ignore());
     }
 }
 ```
 
+> **Why no `Movie → MovieDetailDto` here?** That DTO *flattens* `Synopsis`/`Language`/`Budget`
+> out of the nested `Movie.Details`. AutoMapper's flattening convention looks for source names
+> like `DetailsSynopsis`, not `Synopsis`, so a bare `CreateMap` would silently leave those
+> three null. It needs explicit `ForMember(d => d.Synopsis, o => o.MapFrom(m => m.Details!.Synopsis))`
+> wiring — added when the service actually needs it. For now your Step-9.6 hand-mapping in the
+> controller still covers details.
+
+**13.3 — Register AutoMapper in DI, with the license key.** The assembly argument tells it
+where to scan for `Profile` subclasses — point it at the `MovieData` assembly via the profile's
+own type. Feed the commercial license key from configuration (never hardcode it in source):
+
 ```csharp
 // MovieApi/Program.cs
-builder.Services.AddAutoMapper(cfg => { }, typeof(MovieData.Mapping.MovieProfile).Assembly);
+builder.Services.AddAutoMapper(
+    cfg => cfg.LicenseKey = builder.Configuration["AutoMapper:LicenseKey"],
+    typeof(MovieData.Mapping.MovieProfile).Assembly);
 ```
 
-**Verify:** `dotnet run` boots; AutoMapper config validates at startup.
+Get a free community key at <https://luckypennysoftware.com/automapper> and store it in
+user-secrets so it never lands in git:
+
+```bash
+dotnet user-secrets init --project MovieApi
+dotnet user-secrets set "AutoMapper:LicenseKey" "<paste-your-key>" --project MovieApi
+```
+
+A missing key is harmless: `Configuration["AutoMapper:LicenseKey"]` returns `null`, AutoMapper
+runs and just logs the dev warning until you add it.
+
+> **Optional but recommended:** AutoMapper does **not** validate mappings at startup on its
+> own. To catch a broken/incomplete map early instead of at the first request, resolve
+> `IMapper` after `build()` in development and call
+> `app.Services.GetRequiredService<IMapper>().ConfigurationProvider.AssertConfigurationIsValid();`.
+> (This is exactly how the unmapped `MovieCreateDto → Movie` members in 13.2 were caught.)
+
+**Verify:** `dotnet build` → no `NU1903` advisory; `dotnet run` boots and `IMapper` resolves.
+(If you added the assertion above, a bad map fails fast at startup with the exact unmapped member.)
 **Commit:** `feat(data): add AutoMapper MovieProfile`
 
 ### Step 14: Add the exception hierarchy and IExceptionHandler
