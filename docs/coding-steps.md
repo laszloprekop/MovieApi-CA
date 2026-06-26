@@ -1145,21 +1145,192 @@ builder.Services.AddScoped<IServiceManager, ServiceManager>();
 
 ### Step 18: Move MoviesController to MoviePresentation and depend on IServiceManager
 
+> **The hard requirement (brief Del 8).** The controller may talk **only** to
+> `IServiceManager` → `IMovieService` — never `DbContext`, `IUnitOfWork`, `IMapper`, or a
+> repository. `MoviePresentation` doesn't even reference `MovieData`, so a half-migrated
+> controller that still reaches for `services.Movies.Add(...)`, `services.CompleteAsync()`,
+> or `using MovieData;` **won't compile**. The consequence: *every* operation the controller
+> used to do inline (list, details, create, update, delete) must become an **intent-level
+> method on `IMovieService`**, with all data access + mapping living in `MovieService`. Moving
+> only `GetMovie` (as a first taste) leaves the other five routes with nothing valid to call —
+> which is exactly the build break you hit if you only swap the constructor.
+
+**18.1 — Grow `IMovieService` to the full Movies surface.**
+
 ```csharp
-// MoviePresentation/Controllers/MoviesController.cs   (moved out of MovieApi)
+// MovieContracts/IMovieService.cs
+using MovieCore.DTOs;
+
+namespace MovieContracts;
+
+public interface IMovieService
+{
+    Task<IEnumerable<MovieDto>> GetAllAsync(string? genre, int? year, string? actor);
+    Task<MovieDto> GetAsync(int id);
+    Task<MovieDetailDto> GetDetailsAsync(int id);
+    Task<MovieDto> CreateAsync(MovieCreateDto dto);
+    Task UpdateAsync(int id, MovieUpdateDto dto);
+    Task DeleteAsync(int id);
+}
+```
+
+**18.2 — Implement them in `MovieService`.** All the logic that lived in the controller moves
+here. "Not found" becomes a thrown `NotFoundException` (the Step-14 handler turns it into a
+404 `ProblemDetails`) — the service has no `NotFound()` to call. `GetAsync`/`GetAllAsync`/
+`CreateAsync` use the mapper; `GetDetailsAsync` hand-maps the flattened `MovieDetailDto`
+(its AutoMapper map was deferred in Step 13 — see the note below).
+
+```csharp
+// MovieServices/MovieService.cs
+using AutoMapper;
+using MovieContracts;
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Exceptions;
+using MovieCore.Models;
+
+namespace MovieServices;
+
+public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
+{
+    public async Task<IEnumerable<MovieDto>> GetAllAsync(string? genre, int? year, string? actor)
+    {
+        var movies = await uow.Movies.GetAllAsync();
+        if (!string.IsNullOrWhiteSpace(genre)) movies = movies.Where(m => m.Genre == genre);
+        if (year is not null)                  movies = movies.Where(m => m.Year == year);
+        if (!string.IsNullOrWhiteSpace(actor)) movies = movies.Where(m => m.Actors.Any(a => a.Name == actor));
+        return mapper.Map<IEnumerable<MovieDto>>(movies);
+    }
+
+    public async Task<MovieDto> GetAsync(int id)
+    {
+        var movie = await uow.Movies.GetAsync(id)
+                    ?? throw new NotFoundException($"Movie {id} not found");
+        return mapper.Map<MovieDto>(movie);
+    }
+
+    public async Task<MovieDetailDto> GetDetailsAsync(int id)
+    {
+        var movie = await uow.Movies.GetWithDetailsAsync(id)
+                    ?? throw new NotFoundException($"Movie {id} not found");
+
+        return new MovieDetailDto
+        {
+            Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration,
+            Synopsis = movie.Details?.Synopsis,
+            Language = movie.Details?.Language,
+            Budget = movie.Details?.Budget ?? 0,
+            Reviews = movie.Reviews.Select(r => new ReviewDto
+            {
+                Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating
+            }).ToList(),
+            Actors = movie.Actors.Select(a => new ActorDto
+            {
+                Id = a.Id, Name = a.Name, BirthYear = a.BirthYear
+            }).ToList()
+        };
+    }
+
+    public async Task<MovieDto> CreateAsync(MovieCreateDto dto)
+    {
+        var movie = mapper.Map<Movie>(dto);
+        uow.Movies.Add(movie);
+        await uow.CompleteAsync();
+        return mapper.Map<MovieDto>(movie);
+    }
+
+    public async Task UpdateAsync(int id, MovieUpdateDto dto)
+    {
+        var movie = await uow.Movies.GetAsync(id)
+                    ?? throw new NotFoundException($"Movie {id} not found");
+        movie.Title = dto.Title;
+        movie.Year = dto.Year;
+        movie.Genre = dto.Genre;
+        movie.Duration = dto.Duration;
+        await uow.CompleteAsync();
+    }
+
+    public async Task DeleteAsync(int id)
+    {
+        var movie = await uow.Movies.GetAsync(id)
+                    ?? throw new NotFoundException($"Movie {id} not found");
+        uow.Movies.Remove(movie);
+        await uow.CompleteAsync();
+    }
+}
+```
+
+> **Why hand-map the details DTO?** `MovieDetailDto` flattens `Synopsis`/`Language`/`Budget`
+> out of `Movie.Details` and projects the `Reviews`/`Actors` collections — the map Step 13
+> deliberately left out. You *could* add `CreateMap<Movie, MovieDetailDto>()` (plus
+> `Review→ReviewDto`, `Actor→ActorDto`) with `ForMember` flattening to `MovieProfile`; the
+> inline version here keeps Step 18 self-contained.
+>
+> **Carried-over limitation:** the `?actor=` filter still runs over `GetAllAsync()`, which
+> loads no `Actors`, so it returns nothing (same as Step 9.1). Paging + proper filtering
+> arrive in Step 22.
+
+**18.3 — Make the controller a thin pass-through.** Every action delegates to
+`services.MovieService`. Note the shrunken `using` block: **no** `MovieData`,
+`Microsoft.EntityFrameworkCore`, `MovieCore.DomainContracts`, or `MovieCore.Models` — the
+controller now speaks only `Mvc`, the facade, and DTOs.
+
+```csharp
+// MoviePresentation/Controllers/MoviesController.cs
+using Microsoft.AspNetCore.Mvc;
+using MovieContracts;
+using MovieCore.DTOs;
+
 namespace MoviePresentation.Controllers;
 
 [ApiController]
 [Route("api/movies")]
 public class MoviesController(IServiceManager services) : ControllerBase
 {
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(
+        [FromQuery] string? genre, [FromQuery] int? year, [FromQuery] string? actor)
+        => Ok(await services.MovieService.GetAllAsync(genre, year, actor));
+
     [HttpGet("{id:int}")]
     public async Task<ActionResult<MovieDto>> GetMovie(int id)
-        => Ok(await services.MovieService.GetAsync(id));   // no DbContext/UoW/IMapper here
+        => Ok(await services.MovieService.GetAsync(id));
+
+    [HttpGet("{id:int}/details")]
+    public async Task<ActionResult<MovieDetailDto>> GetMovieDetails(int id)
+        => Ok(await services.MovieService.GetDetailsAsync(id));
+
+    [HttpPost]
+    public async Task<ActionResult<MovieDto>> CreateMovie(MovieCreateDto dto)
+    {
+        var created = await services.MovieService.CreateAsync(dto);
+        return CreatedAtAction(nameof(GetMovie), new { id = created.Id }, created);
+    }
+
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> UpdateMovie(int id, MovieUpdateDto dto)
+    {
+        await services.MovieService.UpdateAsync(id, dto);
+        return NoContent();
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteMovie(int id)
+    {
+        await services.MovieService.DeleteAsync(id);
+        return NoContent();
+    }
 }
 ```
 
-**Verify:** `dotnet run`; `GET /api/movies/1` works; grep confirms no `DbContext`/`UnitOfWork`/`IMapper` in `MoviePresentation`.
+> **Behaviour shift (intended):** a missing id on `GET/PUT/DELETE` used to return a bare
+> `NotFound()`; it now flows through `NotFoundException` → the handler → a **404 with a
+> `ProblemDetails` body**. That's the ADR-0003 house style — consistent errors everywhere.
+> `IServiceManager`/`ServiceManager` need **no change**; they already expose `MovieService`.
+
+**Verify:** `dotnet build` is green; `dotnet run` — all six Movies routes behave as before
+(missing ids now return 404 `ProblemDetails`);
+`grep -rn "DbContext\|UnitOfWork\|IMapper\|MovieData" MoviePresentation/` returns nothing.
 **Commit:** `refactor(presentation): MoviesController talks only to IServiceManager`
 
 ### Step 19: Repeat the service slice for Reviews and Actors
