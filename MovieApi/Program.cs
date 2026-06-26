@@ -18,9 +18,6 @@ builder.Services.AddAutoMapper(
 // Add services to the container.
 
 builder.Services.AddControllers().AddApplicationPart(typeof(MoviePresentation.PresentationAssemblyReference).Assembly);
-builder.Services.AddAutoMapper(
-    cfg => cfg.LicenseKey = builder.Configuration["AutoMapper:LicenseKey"],
-    typeof(MovieData.Mapping.MovieProfile).Assembly);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
