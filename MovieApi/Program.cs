@@ -1,5 +1,6 @@
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using MovieApi.ExceptionHandling;
 using MovieCore.DomainContracts;
 using MovieData;
 using MovieData.Extensions;
@@ -22,8 +23,11 @@ builder.Services.AddAutoMapper(
     typeof(MovieData.Mapping.MovieProfile).Assembly);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+builder.Services.AddExceptionHandler<DomainExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 var app = builder.Build();
+app.UseExceptionHandler();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
