@@ -12,7 +12,7 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 // Add services to the container.
 
-builder.Services.AddControllers();
+builder.Services.AddControllers().AddApplicationPart(typeof(MoviePresentation.PresentationAssemblyReference).Assembly);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
