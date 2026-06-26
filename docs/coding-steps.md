@@ -824,7 +824,19 @@ grep -rl "MovieData" --include=*.csproj .             # → only MovieApi/MovieA
 
 ### Step 12: Make MoviePresentation able to host controllers
 
-> **New concept: `FrameworkReference` + `AddApplicationPart`.** A controller in a *separate* class library needs the ASP.NET framework reference, and the API must be told to scan that assembly for controllers — otherwise its routes silently 404.
+> **New concept: `FrameworkReference` + `AddApplicationPart`.** A controller in a *separate*
+> class library needs the ASP.NET framework reference, and the API must be **told** to scan
+> that assembly for controllers — otherwise MVC only looks in the entry assembly and the
+> library's routes silently 404.
+
+Like Step 11, this is plumbing — you wire the library so it *can* host controllers, but no
+controller has moved yet (that's Step 18). Three small parts; each keeps the build green.
+
+**12.1 — Give `MoviePresentation` the ASP.NET framework reference.** A plain class library
+(`Microsoft.NET.Sdk`) has no access to `[ApiController]`, `ControllerBase`, `[HttpGet]`,
+etc. Add a `FrameworkReference` (not a NuGet `PackageReference`) — it points at the
+**shared framework** that's already installed with the runtime, so it adds no package
+download and no extra deployed DLLs.
 
 ```xml
 <!-- MoviePresentation/MoviePresentation.csproj -->
@@ -833,13 +845,42 @@ grep -rl "MovieData" --include=*.csproj .             # → only MovieApi/MovieA
 </ItemGroup>
 ```
 
+> This is the *opposite* of the rule you enforced for `MovieData` in Step 4 (where pulling in
+> the web framework would be wrong). The presentation layer **is** web-facing, so depending on
+> ASP.NET Core here is correct and expected.
+
+**12.2 — Add an assembly marker.** `AddApplicationPart` needs a *type* from the target
+assembly to locate it — but `MoviePresentation` is still empty, so there's nothing to point
+at yet. The idiom is a tiny, permanent **marker class** whose only job is to anchor the
+assembly. It won't move when controllers come and go, so the wiring in 12.3 never breaks.
+
+```csharp
+// MoviePresentation/PresentationAssemblyReference.cs
+namespace MoviePresentation;
+
+/// <summary>Marker type used to locate this assembly for MVC application-part scanning.</summary>
+public sealed class PresentationAssemblyReference { }
+```
+
+**12.3 — Tell the host to scan that assembly for controllers.** `MovieApi` already references
+`MoviePresentation` (Step 11.3), so the type is visible. Chain `AddApplicationPart` onto the
+existing `AddControllers()`.
+
 ```csharp
 // MovieApi/Program.cs
 builder.Services.AddControllers()
-    .AddApplicationPart(typeof(MoviePresentation.Controllers.MoviesController).Assembly);
+    .AddApplicationPart(typeof(MoviePresentation.PresentationAssemblyReference).Assembly);
 ```
 
-**Verify:** `dotnet build` passes (controllers move in the next step).
+> **Why a marker instead of `typeof(...Controllers.MoviesController)`?** Pointing at a
+> controller would force this line to change every time controllers move, and wouldn't even
+> compile right now (no controller lives in `MoviePresentation` until Step 18). The marker
+> decouples "find this assembly" from "which controllers it happens to contain."
+
+**Verify:** `dotnet build` passes. Nothing to hit yet — `MoviePresentation` exposes no routes,
+and your existing controllers still serve from `MovieApi` via the default entry-assembly scan.
+The real proof arrives in Step 18: once `MoviesController` moves into `MoviePresentation`,
+its route responds instead of 404 — confirming the application part is wired.
 **Commit:** `chore(presentation): enable controller hosting from the library`
 
 ### Step 13: Add AutoMapper and a Movie profile
