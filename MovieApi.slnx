@@ -1,5 +1,8 @@
 <Solution>
   <Project Path="MovieApi/MovieApi.csproj" />
+  <Project Path="MovieContracts/MovieContracts.csproj" />
   <Project Path="MovieCore/MovieCore.csproj" />
   <Project Path="MovieData/MovieData.csproj" />
+  <Project Path="MoviePresentation/MoviePresentation.csproj" />
+  <Project Path="MovieServices/MovieServices.csproj" />
 </Solution>
