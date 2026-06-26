@@ -9,6 +9,14 @@ public class MovieProfile : Profile
     public MovieProfile()
     {
         CreateMap<Movie, MovieDto>();
-        CreateMap<MovieCreateDto, Movie>();
+
+        // Movie's Id is DB-generated and its navigations are populated by EF / later
+        // business logic — not from the create DTO. Ignore them so the config is
+        // validation-clean (AssertConfigurationIsValid) and the intent is explicit.
+        CreateMap<MovieCreateDto, Movie>()
+            .ForMember(d => d.Id, o => o.Ignore())
+            .ForMember(d => d.Details, o => o.Ignore())
+            .ForMember(d => d.Reviews, o => o.Ignore())
+            .ForMember(d => d.Actors, o => o.Ignore());
     }
 }
