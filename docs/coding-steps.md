@@ -2001,9 +2001,15 @@ dotnet run --project MovieApi
 
 ---
 
-**22.2 — Add paging with an X-Pagination header.**
+**22.2 — Add paging — alongside the filters, not instead of them.**
 
-> **New concept: complex query binding.** A query object bound from the query string needs `[FromQuery]` or the binder silently leaves it default.
+> **Paging is another facet of the same query.** `GET /api/movies` already binds `genre`/`year`/`actor`.
+> Paging doesn't get its own endpoint and it must **not** replace those parameters — the filters narrow
+> the set, then `page`/`pageSize` slice what's left. So `GetMovies` gains paging *next to* the filters.
+
+> **New concept: complex query binding.** Simple params (`string? genre`) bind from the query string by
+> convention. A complex object like `PaginationParameters` needs **`[FromQuery]`** so the binder reads
+> its properties (`page`, `pageSize`) from the query string instead of expecting them in the body.
 
 ```csharp
 // MovieCore/DTOs/PaginationParameters.cs
@@ -2018,19 +2024,86 @@ public class PaginationParameters
 ```
 
 ```csharp
-// MoviePresentation/Controllers/MoviesController.cs
-[HttpGet]
-public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(PaginationParameters paging)  // ← mistake: a complex object from the query string needs [FromQuery] paging
+// MovieCore/DTOs/PagedResult.cs — the slice plus the metadata that goes in the header
+namespace MovieCore.DTOs;
+
+public record PaginationMeta(int Page, int PageSize, int TotalCount)
 {
-    var page = await services.MovieService.GetPageAsync(paging);
+    public int TotalPages => (int)Math.Ceiling(TotalCount / (double)PageSize);
+}
+
+public record PagedResult<T>(IReadOnlyList<T> Data, PaginationMeta Meta);
+```
+
+```csharp
+// MovieContracts/IMovieService.cs — add next to GetAllAsync (same filter params + paging)
+Task<PagedResult<MovieDto>> GetPageAsync(string? genre, int? year, string? actor, PaginationParameters paging);
+```
+
+The filter rules now live in one private helper so `GetAllAsync` and `GetPageAsync` can't drift apart:
+
+```csharp
+// MovieServices/MovieService.cs
+
+// filters in one place — note OrdinalIgnoreCase on genre & actor (Steps 20 / 21b)
+private static IEnumerable<Movie> ApplyFilters(IEnumerable<Movie> movies, string? genre, int? year, string? actor)
+{
+    if (!string.IsNullOrWhiteSpace(genre)) movies = movies.Where(m => m.Genres.Any(g => string.Equals(g.Name, genre, StringComparison.OrdinalIgnoreCase)));
+    if (year is not null)                  movies = movies.Where(m => m.Year == year);
+    if (!string.IsNullOrWhiteSpace(actor)) movies = movies.Where(m => m.Actors.Any(a => string.Equals(a.Name, actor, StringComparison.OrdinalIgnoreCase)));
+    return movies;
+}
+
+// GetAllAsync now just maps the filtered set (re-using the helper)
+public async Task<IEnumerable<MovieDto>> GetAllAsync(string? genre, int? year, string? actor) =>
+    mapper.Map<IEnumerable<MovieDto>>(ApplyFilters(await uow.Movies.GetAllAsync(), genre, year, actor));
+
+// GetPageAsync filters, counts the FULL filtered set, then slices
+public async Task<PagedResult<MovieDto>> GetPageAsync(string? genre, int? year, string? actor, PaginationParameters paging)
+{
+    var movies = ApplyFilters(await uow.Movies.GetAllAsync(), genre, year, actor);
+
+    var total = movies.Count();   // count before Skip/Take so TotalPages is correct
+    var items = movies
+        .Skip((paging.Page - 1) * paging.PageSize)
+        .Take(paging.PageSize);
+
+    return new PagedResult<MovieDto>(
+        mapper.Map<List<MovieDto>>(items),
+        new PaginationMeta(paging.Page, paging.PageSize, total));
+}
+```
+
+```csharp
+// MoviePresentation/Controllers/MoviesController.cs
+using System.Text.Json;   // add at the top, for JsonSerializer
+// ...
+[HttpGet]
+public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(
+    [FromQuery] string? genre,
+    [FromQuery] int? year,
+    [FromQuery] string? actor,
+    [FromQuery] PaginationParameters paging)        // ← [FromQuery] is what makes page/pageSize bind
+{
+    var page = await services.MovieService.GetPageAsync(genre, year, actor, paging);
     Response.Headers["X-Pagination"] = JsonSerializer.Serialize(page.Meta);
     return Ok(page.Data);
 }
 ```
 
-Add a `PagedResult<T>` (`Data` + `Meta`) in `MovieCore`, and a repository method that does `Skip/Take` + a total count.
+> **Where the slicing happens.** This pages **in memory** — `GetAllAsync()` already does `ToListAsync()`,
+> so `Skip/Take` runs on objects, matching the existing filter approach. Fine for this dataset; in a real
+> app you'd push paging into the query (`IQueryable` `Skip/Take` + `CountAsync`) so the DB returns only
+> one page. That's a repository refactor you can do later — it doesn't change this controller or contract.
 
-**Verify:** `GET /api/movies?pageSize=110&page=2` returns ≤100 items and an `X-Pagination` response header.
+**Verify (filters + paging combine):**
+
+| Request | `Data` | `X-Pagination` header |
+|---|---|---|
+| `GET /api/movies?pageSize=2&page=2` | movies 3–4 (Lost in Translation, Groundhog Day) | `TotalCount` 6, `TotalPages` 3 |
+| `GET /api/movies?genre=drama&pageSize=2&page=1` | first 2 of the 4 Drama films | `TotalCount` 4, `TotalPages` 2 |
+| `GET /api/movies?pageSize=110` | all 6 (clamped to ≤100/page) | `PageSize` 100 |
+
 **Commit:** `feat(services): page list endpoints with X-Pagination header`
 
 ### Step 23: Enforce the structural business rules in the service
