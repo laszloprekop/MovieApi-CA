@@ -1648,16 +1648,87 @@ public class Genre
 // MovieCore/Models/Movie.cs   (replace the string Genre)
 public ICollection<Genre> Genres { get; set; } = new List<Genre>();   // was: public required string Genre
 
-// MovieCore/Genres.cs  — one source of truth for the well-known name
+// MovieCore/Models/Genres.cs  — one source of truth for the well-known name
 public static class Genres { public const string Documentary = "Documentary"; }
 ```
 
+> **The string is gone — fix every reference before you build.** Removing the `Genre`
+> string breaks four call sites plus the AutoMapper map. The read DTOs keep their single
+> `Genre` string, now surfaced as a comma-joined display of the genre names (least churn;
+> the API contract shape is unchanged). The create side moves to `GenreIds` in Step 21.
+
+```csharp
+// MovieServices/MovieService.cs
+
+// GetAllAsync — filter on the collection, not a string.
+// Note: GetAllAsync materialises with ToListAsync(), so this Where runs in memory (LINQ-to-Objects).
+// C# string == is ordinal & case-SENSITIVE, so compare with OrdinalIgnoreCase for a forgiving filter
+// (?genre=drama would otherwise miss "Drama"). Same applies to the actor filter below.
+if (!string.IsNullOrWhiteSpace(genre))
+    movies = movies.Where(m => m.Genres.Any(g => string.Equals(g.Name, genre, StringComparison.OrdinalIgnoreCase)));
+
+// GetDetailsAsync — join the names for the display DTO
+Genre = string.Join(", ", movie.Genres.Select(g => g.Name)),
+
+// UpdateAsync — DELETE `movie.Genre = dto.Genre;`
+// (genres are a collection now; they're set on create via GenreIds in Step 21)
+```
+
+```csharp
+// MovieData/Mapping/MovieProfile.cs
+//   MovieDto.Genre lost its matching source, and Movie.Genres is a new unmapped target —
+//   state both explicitly or AssertConfigurationIsValid() throws at startup.
+CreateMap<Movie, MovieDto>()
+    .ForMember(d => d.Genre, o => o.MapFrom(s => string.Join(", ", s.Genres.Select(g => g.Name))));
+
+CreateMap<MovieCreateDto, Movie>()
+    .ForMember(d => d.Id, o => o.Ignore())
+    .ForMember(d => d.Details, o => o.Ignore())
+    .ForMember(d => d.Reviews, o => o.Ignore())
+    .ForMember(d => d.Actors, o => o.Ignore())
+    .ForMember(d => d.Genres, o => o.Ignore());   // ← new
+```
+
+```csharp
+// MovieData/Extensions/SeedDataExtensions.cs — seed a Genre entity, attach it to the movie
+var drama = new Genre { Name = "Drama" };
+// ...
+var movie = new Movie
+{
+    Title = "Forrest Gump",
+    Year = 1994,
+    Genres = { drama },        // ← was: Genre = "Drama"
+    Duration = 142,
+    // ...
+};
+```
+
+```csharp
+// MovieData/Repositories/MovieRepository.cs — load Genres or the filter/display come back empty
+public async Task<IEnumerable<Movie>> GetAllAsync() =>
+    await context.Movies.Include(m => m.Genres).ToListAsync();
+
+// FindAsync can't Include — switch to a query so the single-movie endpoint shows genres too
+public Task<Movie?> GetAsync(int id) =>
+    context.Movies.Include(m => m.Genres).FirstOrDefaultAsync(m => m.Id == id);
+
+public Task<Movie?> GetWithDetailsAsync(int id) => context.Movies
+    .Include(m => m.Details)
+    .Include(m => m.Reviews)
+    .Include(m => m.Actors)
+    .Include(m => m.Genres)        // ← new
+    .FirstOrDefaultAsync(m => m.Id == id);
+```
+
 ```bash
+# only after the solution builds — EF can't add a migration to a project that won't compile
 dotnet ef migrations add GenreManyToMany --project MovieData --startup-project MovieApi
 dotnet ef database update --project MovieData --startup-project MovieApi
 ```
 
-**Verify:** migration applies; a join table (`GenreMovie`) exists; seed includes `Genres.Documentary`.
+**Verify:** `dotnet build` is green; migration applies; a movies↔genres join table exists;
+seed creates a `Drama` genre linked to Forrest Gump; `GET /api/movies?genre=Drama` returns it
+and its `genre` field reads `Drama`.
 **Commit:** `feat(core): model Genre as many-to-many`
 
 ### Step 21: Require valid genres when creating a movie
