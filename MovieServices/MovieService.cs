@@ -16,7 +16,9 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
             movies = movies.Where(m =>
                 m.Genres.Any(g => string.Equals(g.Name, genre, StringComparison.OrdinalIgnoreCase)));
         if (year is not null) movies = movies.Where(m => m.Year == year);
-        if (!string.IsNullOrWhiteSpace(actor)) movies = movies.Where(m => m.Actors.Any(a => a.Name == actor));
+        if (!string.IsNullOrWhiteSpace(actor)) 
+            movies = movies.Where(m => 
+                m.Actors.Any(a => string.Equals(a.Name, actor, StringComparison.OrdinalIgnoreCase)));
         return mapper.Map<IEnumerable<MovieDto>>(movies);
     }
 
