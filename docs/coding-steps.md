@@ -1795,6 +1795,17 @@ IGenreRepository Genres { get; }
 public IGenreRepository Genres { get; } = new GenreRepository(context);
 ```
 
+> ⚠️ **Adding `DbSet<Genre> Genres` renames a table.** Step 20's migration created the join's
+> principal table as `Genre` (named after the entity type). Once a `DbSet` named `Genres` exists,
+> EF's convention names the table after the property — `Genres` — which is a real model change. If
+> you skip the migration you'll hit `PendingModelChangesWarning` at startup. Capture it:
+>
+> ```bash
+> dotnet ef migrations add AddGenresDbSet --project MovieData --startup-project MovieApi
+> ```
+>
+> (The migration just renames `Genre` → `Genres`; on a dropped DB it's created with the right name.)
+
 **21.3 — Validate and assign the genres in `CreateAsync`.**
 The doc snippet earlier set `movie.Genres` on a variable that didn't exist yet — here is the whole
 method so the order is unambiguous (validate → map → assign → save):
