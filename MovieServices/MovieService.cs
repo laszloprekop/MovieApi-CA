@@ -12,7 +12,9 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
     public async Task<IEnumerable<MovieDto>> GetAllAsync(string? genre, int? year, string? actor)
     {
         var movies = await uow.Movies.GetAllAsync();
-        if (!string.IsNullOrWhiteSpace(genre)) movies = movies.Where(m => m.Genres.Any(g => string.Equals(g.Name, genre, StringComparison.OrdinalIgnoreCase)));
+        if (!string.IsNullOrWhiteSpace(genre))
+            movies = movies.Where(m =>
+                m.Genres.Any(g => string.Equals(g.Name, genre, StringComparison.OrdinalIgnoreCase)));
         if (year is not null) movies = movies.Where(m => m.Year == year);
         if (!string.IsNullOrWhiteSpace(actor)) movies = movies.Where(m => m.Actors.Any(a => a.Name == actor));
         return mapper.Map<IEnumerable<MovieDto>>(movies);
@@ -32,10 +34,10 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
 
         return new MovieDetailDto
         {
-            Id = movie.Id, 
-            Title = movie.Title, 
+            Id = movie.Id,
+            Title = movie.Title,
             Year = movie.Year,
-            Genre = string.Join(", ", movie.Genres.Select(g => g.Name)), 
+            Genre = string.Join(", ", movie.Genres.Select(g => g.Name)),
             Duration = movie.Duration,
             Synopsis = movie.Details?.Synopsis,
             Language = movie.Details?.Language,
@@ -53,7 +55,15 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
 
     public async Task<MovieDto> CreateAsync(MovieCreateDto dto)
     {
+        if (dto.GenreIds is null || dto.GenreIds.Count == 0)
+            throw new BusinessRuleException("A movie must have at least one genre.");
+
+        var genres = await uow.Genres.GetByIdsAsync(dto.GenreIds);
+        if (genres.Count != dto.GenreIds.Distinct().Count())
+            throw new BusinessRuleException("One or more genres do not exist.");
+
         var movie = mapper.Map<Movie>(dto);
+        movie.Genres = genres;
         uow.Movies.Add(movie);
         await uow.CompleteAsync();
         return mapper.Map<MovieDto>(movie);

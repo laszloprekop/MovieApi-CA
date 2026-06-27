@@ -12,8 +12,7 @@ namespace MovieCore.DTOs
         [Range(1888, 2100)]
         public int Year { get; set; }
 
-        [Required]
-        public string Genre { get; set; } = string.Empty;
+        public List<int> GenreIds { get; set; } = [];
 
         [Range(1, 1000)]
         public int Duration { get; set; }

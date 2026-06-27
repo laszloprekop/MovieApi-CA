@@ -8,4 +8,5 @@ public class UnitOfWork(MovieContext context): IUnitOfWork
     public IReviewRepository Reviews { get; } = new ReviewRepository(context);
     public IActorRepository Actors { get; } = new ActorRepository(context);
     public Task CompleteAsync() => context.SaveChangesAsync();
+    public IGenreRepository Genres { get; } = new GenreRepository(context);
 }

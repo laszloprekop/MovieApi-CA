@@ -6,4 +6,5 @@ public interface IUnitOfWork
     IReviewRepository Reviews { get; }
     IActorRepository Actors { get; }
     Task CompleteAsync();
+    IGenreRepository Genres { get; }
 }
