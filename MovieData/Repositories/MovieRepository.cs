@@ -7,7 +7,7 @@ namespace MovieData.Repositories;
 public class MovieRepository(MovieContext context) : IMovieRepository
 {
     public async Task<IEnumerable<Movie>> GetAllAsync() => 
-        await context.Movies.Include(m => m.Genres).ToListAsync();
+        await context.Movies.Include(m => m.Genres).Include(m => m.Actors).ToListAsync();
 
     public Task<Movie?> GetAsync(int id) => 
         context.Movies.Include(m => m.Genres).FirstOrDefaultAsync(m => m.Id == id);
