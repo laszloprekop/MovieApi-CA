@@ -49,7 +49,7 @@ Content-Type: application/json
 {
   "title": "The Shawshank Redemption",
   "year": 1994,
-  "genre": "Drama",
+  "genreIds": [1],
   "duration": 142
 }
 
@@ -62,7 +62,7 @@ Content-Type: application/json
 {
   "title": "Forrest Gump Updated",
   "year": 1994,
-  "genre": "Drama",
+  "genreIds": [1],
   "duration": 142
 }
 
@@ -132,5 +132,48 @@ Content-Type: application/json
 
 ### DELETE review
 DELETE {{MovieApi_HostAddress}}/api/reviews/1
+
+###
+
+
+### Genre filter — expect 4 (Forrest Gump, Shawshank, Lost in Translation, Her)
+GET {{MovieApi_HostAddress}}/api/movies?genre=drama
+Accept: application/json
+
+###
+
+### Genre filter — expect 2 (Lost in Translation, Groundhog Day)
+GET {{MovieApi_HostAddress}}/api/movies?genre=comedy
+Accept: application/json
+
+###
+
+### Actor filter (case-insensitive) — expect 2 (Lost in Translation, Groundhog Day)
+GET {{MovieApi_HostAddress}}/api/movies?actor=bill%20murray
+Accept: application/json
+
+###
+
+### Year filter — expect 2 (Forrest Gump, Shawshank)
+GET {{MovieApi_HostAddress}}/api/movies?year=1994
+Accept: application/json
+
+###
+
+### Page 2, size 2 — expect movies 3-4; X-Pagination header TotalCount 6, TotalPages 3
+GET {{MovieApi_HostAddress}}/api/movies?pageSize=2&page=2
+Accept: application/json
+
+###
+
+### Filter + page — expect first 2 of the 4 Drama films; X-Pagination TotalCount 4, TotalPages 2
+GET {{MovieApi_HostAddress}}/api/movies?genre=drama&pageSize=2&page=1
+Accept: application/json
+
+###
+
+### PageSize clamp — request 110, server caps at 100; expect all 6; X-Pagination PageSize 100
+GET {{MovieApi_HostAddress}}/api/movies?pageSize=110
+Accept: application/json
 
 ###
