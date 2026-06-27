@@ -12,8 +12,8 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
     public async Task<IEnumerable<MovieDto>> GetAllAsync(string? genre, int? year, string? actor)
     {
         var movies = await uow.Movies.GetAllAsync();
-        if (!string.IsNullOrWhiteSpace(genre)) movies = movies.Where(m => m.Genre == genre);
-        if (year is not null)                  movies = movies.Where(m => m.Year == year);
+        if (!string.IsNullOrWhiteSpace(genre)) movies = movies.Where(m => m.Genres.Any(g => string.Equals(g.Name, genre, StringComparison.OrdinalIgnoreCase)));
+        if (year is not null) movies = movies.Where(m => m.Year == year);
         if (!string.IsNullOrWhiteSpace(actor)) movies = movies.Where(m => m.Actors.Any(a => a.Name == actor));
         return mapper.Map<IEnumerable<MovieDto>>(movies);
     }
@@ -32,7 +32,11 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
 
         return new MovieDetailDto
         {
-            Id = movie.Id, Title = movie.Title, Year = movie.Year, Genre = movie.Genre, Duration = movie.Duration,
+            Id = movie.Id, 
+            Title = movie.Title, 
+            Year = movie.Year,
+            Genre = string.Join(", ", movie.Genres.Select(g => g.Name)), 
+            Duration = movie.Duration,
             Synopsis = movie.Details?.Synopsis,
             Language = movie.Details?.Language,
             Budget = movie.Details?.Budget ?? 0,
@@ -61,7 +65,6 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
                     ?? throw new NotFoundException($"Movie {id} not found");
         movie.Title = dto.Title;
         movie.Year = dto.Year;
-        movie.Genre = dto.Genre;
         movie.Duration = dto.Duration;
         await uow.CompleteAsync();
     }

@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using MovieCore.Models;
 
 namespace MovieCore.DTOs
 {

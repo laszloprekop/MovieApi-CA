@@ -16,12 +16,13 @@ public static class SeedDataExtensions
         var hanks = new Actor { Name = "Tom Hanks", BirthYear = 1956 };
         var robbins = new Actor { Name = "Tim Robbins", BirthYear = 1958 };
 
+        var drama = new Genre { Name = "Drama" };
         // The whole graph as plain objects - EF figures out how to join them
         var movie = new Movie
         {
             Title = "Forrest Gump",
             Year = 1994,
-            Genre = "Drama",
+            Genres = { drama },
             Duration = 142,
             Details = new MovieDetails
             {

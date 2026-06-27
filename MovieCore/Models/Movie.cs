@@ -5,7 +5,7 @@
         public int Id { get; set; }
         public required string Title { get; set; }
         public int Year { get; set; }
-        public required string Genre { get; set; }
+        public ICollection<Genre> Genres { get; set; } = new List<Genre>();
         public int Duration { get; set; }
 
         // 1:1 Movie is the principal, MovieDetails is the dependent (holds the FX)
@@ -16,6 +16,5 @@
 
         //N:M many to many via implicit join table MovieActor
         public ICollection<Actor> Actors { get; set; } = new List<Actor>();
-
     }
 }
