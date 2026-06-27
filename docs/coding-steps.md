@@ -1704,9 +1704,11 @@ var movie = new Movie
 ```
 
 ```csharp
-// MovieData/Repositories/MovieRepository.cs — load Genres or the filter/display come back empty
+// MovieData/Repositories/MovieRepository.cs — eager-load what the filters touch, or they match nothing.
+// The list endpoint filters on BOTH m.Genres (genre) and m.Actors (actor), so include both —
+// otherwise the unloaded collection is empty and that filter silently returns [].
 public async Task<IEnumerable<Movie>> GetAllAsync() =>
-    await context.Movies.Include(m => m.Genres).ToListAsync();
+    await context.Movies.Include(m => m.Genres).Include(m => m.Actors).ToListAsync();
 
 // FindAsync can't Include — switch to a query so the single-movie endpoint shows genres too
 public Task<Movie?> GetAsync(int id) =>
@@ -2106,20 +2108,98 @@ public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(
 
 **Commit:** `feat(services): page list endpoints with X-Pagination header`
 
-### Step 23: Enforce the structural business rules in the service
+### Step 23: Enforce the unique-title rule in the service
 
-Brief **Del 6**, rules 2, 3, 6 — all in the service, all `BusinessRuleException`.
+> **Scope check first.** Del 6 lists three structural rules, but only one is actually place-able here:
+> - **Duplicate title** (rule 2) — new; wired below, in the service, as a `BusinessRuleException` → 400.
+> - **Actor can't be added twice** (rule 6) — **already done** in `ActorService.AddToMovieAsync`
+>   (Step 19's `if (movie.Actors.Any(a => a.Id == actorId)) throw new BusinessRuleException(...)`).
+>   Nothing to add — re-read that guard and confirm it's there.
+> - **Negative budget** (rule 3) — `Budget` lives on `MovieDetails`, which has **no write path** until
+>   **Step 26** (PATCH). No create/update DTO carries a budget today, so the guard has nowhere to live
+>   yet; it moves to Step 26. (The original snippet's `dto.Budget` wouldn't even compile.)
+
+**23.1 — Add a `TitleExistsAsync` lookup to the Movie repository.**
+One method serves both create and update: the optional `excludeId` lets update ignore the movie's
+**own** current title — otherwise saving a movie without renaming it would falsely trip the rule.
 
 ```csharp
-// MovieServices — guards before CompleteAsync
-if (dto.Budget < 0) throw new BusinessRuleException("Budget may not be negative.");
-if (await uow.Movies.TitleExistsAsync(dto.Title)) throw new BusinessRuleException("A movie with that title already exists.");
-// when assigning an actor:
-if (movie.Actors.Any(a => a.Id == actorId)) throw new BusinessRuleException("Actor already assigned to this movie.");
+// MovieCore/DomainContracts/IMovieRepository.cs   (add)
+Task<bool> TitleExistsAsync(string title, int? excludeId = null);
 ```
 
-**Verify:** duplicate title → 400; negative budget → 400; re-adding an actor → 400.
-**Commit:** `feat(services): enforce budget/title/actor rules`
+```csharp
+// MovieData/Repositories/MovieRepository.cs   (add)
+public Task<bool> TitleExistsAsync(string title, int? excludeId = null) =>
+    context.Movies.AnyAsync(m => m.Title == title && (excludeId == null || m.Id != excludeId));
+```
+
+> This runs in SQL (`AnyAsync` is translated), so it's case-insensitive under the default collation —
+> `"forrest gump"` collides with `"Forrest Gump"`, which matches the intent of "no duplicate titles".
+
+**23.2 — Reject a duplicate title on create.**
+Guard at the top of `CreateAsync` (full method shown so placement is unambiguous):
+
+```csharp
+// MovieServices/MovieService.cs
+public async Task<MovieDto> CreateAsync(MovieCreateDto dto)
+{
+    if (await uow.Movies.TitleExistsAsync(dto.Title))
+        throw new BusinessRuleException($"A movie titled '{dto.Title}' already exists.");
+
+    if (dto.GenreIds is null || dto.GenreIds.Count == 0)
+        throw new BusinessRuleException("A movie needs at least one genre.");
+
+    var genres = await uow.Genres.GetByIdsAsync(dto.GenreIds);
+    if (genres.Count != dto.GenreIds.Distinct().Count())
+        throw new BusinessRuleException("One or more genres do not exist.");
+
+    var movie = mapper.Map<Movie>(dto);
+    movie.Genres = genres;
+    uow.Movies.Add(movie);
+    await uow.CompleteAsync();
+    return mapper.Map<MovieDto>(movie);
+}
+```
+
+**23.3 — Reject a colliding rename, but allow a no-op rename — and drop the dead `Genre` field.**
+`MovieUpdateDto` still carries `[Required] string Genre`, but `UpdateAsync` stopped reading it back in
+Step 20. Leaving it forces every `PUT` to send a meaningless genre. Delete it, then add the guard with
+`id` passed in so the movie can't collide with itself:
+
+```csharp
+// MovieCore/DTOs/MovieCreateDto.cs   (inside MovieUpdateDto — DELETE this property)
+//   [Required] public string Genre { get; set; } = string.Empty;   ← unused since Step 20
+```
+
+```csharp
+// MovieServices/MovieService.cs
+public async Task UpdateAsync(int id, MovieUpdateDto dto)
+{
+    var movie = await uow.Movies.GetAsync(id)
+                ?? throw new NotFoundException($"Movie {id} not found");
+
+    if (await uow.Movies.TitleExistsAsync(dto.Title, id))   // excludeId = id → ignore itself
+        throw new BusinessRuleException($"A movie titled '{dto.Title}' already exists.");
+
+    movie.Title = dto.Title;
+    movie.Year = dto.Year;
+    movie.Duration = dto.Duration;
+    await uow.CompleteAsync();
+}
+```
+
+**Verify (run against the Step 22.1 seed):**
+
+| Request | Result |
+|---|---|
+| `POST /api/movies` with `"title": "Forrest Gump"` (seeded) | **400** — "A movie titled 'Forrest Gump' already exists." |
+| `POST /api/movies` with a fresh title + valid `genreIds` | **201 Created** |
+| `PUT /api/movies/1` keeping `"title": "Forrest Gump"` | **204** — self-exclusion, no false collision |
+| `PUT /api/movies/1` with `"title": "Her"` (movie 6's title) | **400** — duplicate |
+| `POST /api/movies/1/actors/1` twice | **400** on the repeat — already enforced (Step 19) |
+
+**Commit:** `feat(services): enforce unique movie title`
 
 ### Step 24: Enforce the review-count rules
 
