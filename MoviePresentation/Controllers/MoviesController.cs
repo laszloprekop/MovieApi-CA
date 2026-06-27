@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using MovieContracts;
 using MovieCore.DTOs;
@@ -9,14 +10,21 @@ namespace MoviePresentation.Controllers;
 public class MoviesController(IServiceManager services) : ControllerBase
 {
     // GET: api/movies
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(
         [FromQuery] string? genre,
         [FromQuery] int? year,
-        [FromQuery] string? actor) =>
-        Ok(await services.MovieService.GetAllAsync(genre, year, actor));
+        [FromQuery] string? actor,
+        [FromQuery] PaginationParameters paging)
+    {
+        var page = await services.MovieService.GetPageAsync(genre, year, actor, paging);
+        Response.Headers["X-Pagination"] = JsonSerializer.Serialize(page.Meta);
+        return Ok(page.Data);
+    }
 
     // GET: api/movies/{id}
+
     [HttpGet("{id:int}")]
     public async Task<ActionResult<MovieDto>> GetMovie(int id) =>
         Ok(await services.MovieService.GetAsync(id));
