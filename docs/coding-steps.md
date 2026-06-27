@@ -1733,22 +1733,142 @@ and its `genre` field reads `Drama`.
 
 ### Step 21: Require valid genres when creating a movie
 
-A create must reference **≥1** genre and **all** must exist, else `BusinessRuleException` → 400 `ProblemDetails` (ADR 0002). `MovieCreateDto` now carries `GenreIds`.
+A create must reference **≥1** genre and **all** must exist, else `BusinessRuleException` → 400
+`ProblemDetails` (ADR 0002). Step 20 made the write routes genre-blind (the create map ignores
+`Genres`); this step gives the client a way to pass genres — a list of **ids** — and validates them
+in the service. Do the four sub-steps in order; each one is needed before the project builds again.
+
+**21.1 — Swap the `Genre` string for `GenreIds` on the create DTO.**
+The old `string Genre` is dead now (Step 20 stopped mapping it). Replace it with the id list the
+service will look up. Leave `MovieUpdateDto` alone for now (see the note at the end of the step).
 
 ```csharp
-// MovieServices/MovieService.cs   (in CreateAsync, before Add)
-if (dto.GenreIds is null || dto.GenreIds.Count == 0)
-    throw new BusinessRuleException("A movie needs at least one genre.");
-
-var genres = await uow.Genres.GetByIdsAsync(dto.GenreIds);
-if (genres.Count != dto.GenreIds.Distinct().Count())
-    throw new BusinessRuleException("One or more genres do not exist.");
-
-movie.Genres = genres;
+// MovieCore/DTOs/MovieCreateDto.cs   (inside MovieCreateDto — replace the string Genre property)
+public List<int> GenreIds { get; set; } = [];   // was: [Required] public string Genre
 ```
 
-**Verify:** `POST` with `genreIds: []` → 400; with an unknown id → 400; with a real id → 201.
+> No `[Required]`/`[MinLength]` here on purpose: we want an empty list to reach the **service** and
+> throw a `BusinessRuleException` (ADR-0002, a real 400 `ProblemDetails`), not be short-circuited by
+> model-state validation. Letting the service own the rule is the whole point of the step.
+
+**21.2 — Add a Genre repository and expose it on the Unit of Work.**
+`Genre` is in the EF model (via `Movie.Genres`) but has no repository yet. Four small files, mirroring
+the existing repos:
+
+```csharp
+// MovieCore/DomainContracts/IGenreRepository.cs
+using MovieCore.Models;
+namespace MovieCore.DomainContracts;
+
+public interface IGenreRepository
+{
+    Task<List<Genre>> GetByIdsAsync(IEnumerable<int> ids);
+}
+```
+
+```csharp
+// MovieData/Repositories/GenreRepository.cs
+using Microsoft.EntityFrameworkCore;
+using MovieCore.DomainContracts;
+using MovieCore.Models;
+namespace MovieData.Repositories;
+
+public class GenreRepository(MovieContext context) : IGenreRepository
+{
+    public async Task<List<Genre>> GetByIdsAsync(IEnumerable<int> ids) =>
+        await context.Genres.Where(g => ids.Contains(g.Id)).ToListAsync();
+}
+```
+
+```csharp
+// MovieData/MovieContext.cs   (add the DbSet so context.Genres exists)
+public DbSet<Genre> Genres => Set<Genre>();
+```
+
+```csharp
+// MovieCore/DomainContracts/IUnitOfWork.cs   (add the property)
+IGenreRepository Genres { get; }
+```
+
+```csharp
+// MovieData/Repositories/UnitOfWork.cs   (construct it like the others)
+public IGenreRepository Genres { get; } = new GenreRepository(context);
+```
+
+**21.3 — Validate and assign the genres in `CreateAsync`.**
+The doc snippet earlier set `movie.Genres` on a variable that didn't exist yet — here is the whole
+method so the order is unambiguous (validate → map → assign → save):
+
+```csharp
+// MovieServices/MovieService.cs   (replace CreateAsync)
+public async Task<MovieDto> CreateAsync(MovieCreateDto dto)
+{
+    if (dto.GenreIds is null || dto.GenreIds.Count == 0)
+        throw new BusinessRuleException("A movie needs at least one genre.");
+
+    var genres = await uow.Genres.GetByIdsAsync(dto.GenreIds);
+    if (genres.Count != dto.GenreIds.Distinct().Count())
+        throw new BusinessRuleException("One or more genres do not exist.");
+
+    var movie = mapper.Map<Movie>(dto);
+    movie.Genres = genres;            // the create map ignores Genres, so set them explicitly
+    uow.Movies.Add(movie);
+    await uow.CompleteAsync();
+    return mapper.Map<MovieDto>(movie);   // response shows "genre": joined names (Step 20 map)
+}
+```
+
+**21.4 — Seed a couple of standalone genres so POSTs have real ids to reference.**
+Without this you'd only have `Drama` (id 1, from the movie graph) and nothing to demonstrate a
+multi-genre create. Add the extra genres before the movie:
+
+```csharp
+// MovieData/Extensions/SeedDataExtensions.cs   (after `var drama = new Genre { Name = "Drama" };`)
+var comedy = new Genre { Name = "Comedy" };
+context.Genres.AddRange(drama, comedy);   // fresh DB → Drama = id 1, Comedy = id 2
+// (the movie still links Drama via `Genres = { drama }` — same instance, inserted once)
+```
+
+Genres are DB-assigned in insert order, so on a freshly dropped database Drama is `1`, Comedy is `2`.
+Because you changed the seed, drop and re-run so it takes effect:
+
+```bash
+dotnet ef database drop -f --project MovieData --startup-project MovieApi
+dotnet run --project MovieApi
+```
+
+**Verify (expected responses):**
+
+| Request body to `POST /api/movies` | Result |
+|---|---|
+| `{ "title": "X", "year": 2000, "duration": 100 }` (no `genreIds`) | **400** `ProblemDetails` — "A movie needs at least one genre." |
+| `{ ..., "genreIds": [] }` | **400** — same rule |
+| `{ ..., "genreIds": [999] }` (unknown id) | **400** — "One or more genres do not exist." |
+| `{ ..., "genreIds": [1, 2] }` | **201 Created**, `Location` header set, body `"genre": "Drama, Comedy"` |
+
 **Commit:** `feat(services): validate genres on movie create`
+
+> **Aside — `MovieUpdateDto.Genre` is now vestigial.** `PUT` still requires a `genre` string in the
+> payload (it's `[Required]`) but `UpdateAsync` ignores it. Updating a movie's genres is a separate
+> concern not covered here; if the leftover `[Required] string Genre` on `MovieUpdateDto` bothers you,
+> deleting that property is safe (nothing reads it) and stops `PUT` from demanding a genre. Leaving it
+> is also fine — your call.
+
+### Step 21b: Make the remaining list filters case-insensitive
+
+Step 20 fixed the **genre** filter to compare with `OrdinalIgnoreCase` (the `Where` runs in memory, so
+C#'s case-sensitive `==` would miss `?genre=drama`). The **actor** filter on the next line has the
+exact same bug — it's the only other in-memory string-equality filter in the codebase. Bring it in line:
+
+```csharp
+// MovieServices/MovieService.cs   (GetAllAsync — actor filter)
+if (!string.IsNullOrWhiteSpace(actor))
+    movies = movies.Where(m => m.Actors.Any(a => string.Equals(a.Name, actor, StringComparison.OrdinalIgnoreCase)));
+```
+
+**Verify:** `GET /api/movies?actor=tom hanks` returns Forrest Gump (lower-case now matches `"Tom Hanks"`),
+just as `?genre=drama` already does.
+**Commit:** `fix(services): make actor filter case-insensitive`
 
 ### Step 22: Add paging with an X-Pagination header
 
