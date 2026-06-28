@@ -20,7 +20,9 @@ builder.Services.AddAutoMapper(
 
 // Add services to the container.
 
-builder.Services.AddControllers().AddApplicationPart(typeof(MoviePresentation.PresentationAssemblyReference).Assembly);
+builder.Services.AddControllers()
+    .AddApplicationPart(typeof(MoviePresentation.PresentationAssemblyReference).Assembly)
+    .AddNewtonsoftJson();
 
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();

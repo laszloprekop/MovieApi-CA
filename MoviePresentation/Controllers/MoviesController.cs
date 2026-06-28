@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.JsonPatch;
 using Microsoft.AspNetCore.Mvc;
 using MovieContracts;
 using MovieCore.DTOs;
@@ -56,6 +57,18 @@ public class MoviesController(IServiceManager services) : ControllerBase
     public async Task<IActionResult> DeleteMovie(int id)
     {
         await services.MovieService.DeleteAsync(id);
+        return NoContent();
+    }
+
+    // PATCH: api/movies/{id}
+    [HttpPatch("{id:int}")]
+    public async Task<IActionResult> Patch(int id, [FromBody] JsonPatchDocument<MoviePatchDto> patch)
+    {
+        var dto = await services.MovieService.GetPatchModelAsync(id);
+        patch.ApplyTo(dto, ModelState);
+        if (!TryValidateModel(dto)) return ValidationProblem(ModelState);
+
+        await services.MovieService.ApplyPatchAsync(id, dto);
         return NoContent();
     }
 }

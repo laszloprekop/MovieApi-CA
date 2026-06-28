@@ -49,7 +49,9 @@ Content-Type: application/json
 {
   "title": "Inception",
   "year": 2010,
-  "genreIds": [1],
+  "genreIds": [
+    1
+  ],
   "duration": 148
 }
 
@@ -184,7 +186,9 @@ Content-Type: application/json
 {
   "title": "Forrest Gump",
   "year": 1994,
-  "genreIds": [1],
+  "genreIds": [
+    1
+  ],
   "duration": 142
 }
 
@@ -197,7 +201,9 @@ Content-Type: application/json
 {
   "title": "forrest gump",
   "year": 1994,
-  "genreIds": [1],
+  "genreIds": [
+    1
+  ],
   "duration": 142
 }
 
@@ -210,7 +216,10 @@ Content-Type: application/json
 {
   "title": "The Matrix",
   "year": 1999,
-  "genreIds": [1, 4],
+  "genreIds": [
+    1,
+    4
+  ],
   "duration": 136
 }
 
@@ -276,5 +285,100 @@ POST {{MovieApi_HostAddress}}/api/movies/5/actors/4
 
 ### Step 25 — same add on a non-Documentary (Forrest Gump, movie 1) — expect 204 (cap doesn't apply)
 POST {{MovieApi_HostAddress}}/api/movies/1/actors/4
+
+###
+
+### Step 26 — PATCH budget on Forrest Gump (movie 1, has Details) — expect 204, only Budget changes
+PATCH {{MovieApi_HostAddress}}/api/movies/1
+Content-Type: application/json-patch+json
+
+[
+  {
+    "op": "replace",
+    "path": "/budget",
+    "value": 500000
+  }
+]
+
+###
+
+### Step 26 — confirm only Budget changed
+GET {{MovieApi_HostAddress}}/api/movies/1/details
+Accept: application/json
+
+###
+
+### Step 26 — negative budget — expect 400 "Budget may not be negative."
+PATCH {{MovieApi_HostAddress}}/api/movies/1
+Content-Type: application/json-patch+json
+
+[
+  {
+    "op": "replace",
+    "path": "/budget",
+    "value": -5
+  }
+]
+
+###
+
+### Step 26 — Documentary budget cap: March of the Penguins (movie 5) over 1,000,000 — expect 400
+PATCH {{MovieApi_HostAddress}}/api/movies/5
+Content-Type: application/json-patch+json
+
+[
+  {
+    "op": "replace",
+    "path": "/budget",
+    "value": 1000001
+  }
+]
+
+###
+
+### Step 26 — Documentary at the cap (1,000,000) — expect 204 (also creates the missing Details row)
+PATCH {{MovieApi_HostAddress}}/api/movies/5
+Content-Type: application/json-patch+json
+
+[
+  {
+    "op": "replace",
+    "path": "/budget",
+    "value": 1000000
+  }
+]
+
+###
+
+### Step 26 — patch a movie with no Details yet (Shawshank, movie 2) — expect 204, Details created
+PATCH {{MovieApi_HostAddress}}/api/movies/2
+Content-Type: application/json-patch+json
+
+[
+  {
+    "op": "replace",
+    "path": "/synopsis",
+    "value": "Two imprisoned men bond over years, finding solace and redemption."
+  },
+  {
+    "op": "replace",
+    "path": "/language",
+    "value": "English"
+  }
+]
+
+###
+
+### Step 26 — patch title to a duplicate ("Her", movie 6) — expect 400 (title rule applies on PATCH too)
+PATCH {{MovieApi_HostAddress}}/api/movies/1
+Content-Type: application/json-patch+json
+
+[
+  {
+    "op": "replace",
+    "path": "/title",
+    "value": "Her"
+  }
+]
 
 ###

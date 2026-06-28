@@ -25,7 +25,7 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
         mapper.Map<IEnumerable<MovieDto>>(ApplyFilters(await uow.Movies.GetAllAsync(), genre, year, actor));
 
     public async Task<PagedResult<MovieDto>> GetPageAsync(string? genre, int? year, string? actor,
-        PaginationParameters? paging)
+        PaginationParameters paging)
     {
         var movies = ApplyFilters(await uow.Movies.GetAllAsync(), genre, year, actor);
 
@@ -107,6 +107,56 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
         var movie = await uow.Movies.GetAsync(id)
                     ?? throw new NotFoundException($"Movie {id} not found");
         uow.Movies.Remove(movie);
+        await uow.CompleteAsync();
+    }
+
+    public async Task<MoviePatchDto> GetPatchModelAsync(int id)
+    {
+        var movie = await uow.Movies.GetWithDetailsAsync(id)
+                    ?? throw new NotFoundException($"Movie {id} not found");
+        return new MoviePatchDto
+        {
+            Title = movie.Title,
+            Year = movie.Year,
+            Duration = movie.Duration,
+            Synopsis = movie.Details?.Synopsis,
+            Language = movie.Details?.Language,
+            Budget = movie.Details?.Budget ?? 0
+        };
+    }
+
+    public async Task ApplyPatchAsync(int id, MoviePatchDto dto)
+    {
+        var movie = await uow.Movies.GetWithDetailsAsync(id)
+                    ?? throw new NotFoundException($"Movie {id} not found");
+
+        if (await uow.Movies.TitleExistsAsync(dto.Title, id))
+            throw new BusinessRuleException($"Movie with title {dto.Title} already exists.");
+        if (dto.Budget < 0)
+            throw new BusinessRuleException("Budget cannot be negative.");
+        if (MovieRules.IsDocumentary(movie) && dto.Budget > 1_000_000m)
+            throw new BusinessRuleException("Documentaries cannot have a budget greater than $1,000,000.");
+
+        movie.Title = dto.Title;
+        movie.Year = dto.Year;
+        movie.Duration = dto.Duration;
+
+        if (movie.Details is null)
+        {
+            movie.Details = new MovieDetails
+            {
+                Synopsis = dto.Synopsis ?? string.Empty,
+                Language = dto.Language ?? string.Empty,
+                Budget = dto.Budget
+            };
+        }
+        else
+        {
+            movie.Details.Synopsis = dto.Synopsis ?? string.Empty;
+            movie.Details.Language = dto.Language ?? string.Empty;
+            movie.Details.Budget = dto.Budget;
+        }
+
         await uow.CompleteAsync();
     }
 }
