@@ -63,6 +63,9 @@ public class ActorService(IUnitOfWork uow) : IActorService
         if (movie.Actors.Any(a => a.Id == actorId))
             throw new BusinessRuleException($"Actor {actorId} is already in movie {movieId}.");
         
+        if (MovieRules.IsDocumentary(movie) && movie.Actors.Count >= 10)
+            throw new BusinessRuleException("A documentary can only have 10 actors.");
+        
         movie.Actors.Add(actor);
         await uow.CompleteAsync();
     }

@@ -268,3 +268,13 @@ Content-Type: application/json
 }
 
 ###
+
+### Step 25 — Documentary actor cap: add an 11th actor to March of the Penguins (movie 5, has 10) — expect 400
+POST {{MovieApi_HostAddress}}/api/movies/5/actors/4
+
+###
+
+### Step 25 — same add on a non-Documentary (Forrest Gump, movie 1) — expect 204 (cap doesn't apply)
+POST {{MovieApi_HostAddress}}/api/movies/1/actors/4
+
+###

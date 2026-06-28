@@ -2,5 +2,5 @@
 
 public static class Genres
 {
-    public const string Drama = "Drama";    
+    public const string Documentary = "Documentary";    
 }
