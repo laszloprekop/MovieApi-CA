@@ -4,5 +4,6 @@
   <Project Path="MovieCore/MovieCore.csproj" />
   <Project Path="MovieData/MovieData.csproj" />
   <Project Path="MoviePresentation/MoviePresentation.csproj" />
+  <Project Path="MovieServices.Tests/MovieServices.Tests.csproj" />
   <Project Path="MovieServices/MovieServices.csproj" />
 </Solution>
