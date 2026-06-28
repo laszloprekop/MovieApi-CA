@@ -1901,13 +1901,24 @@ var documentary = new Genre { Name = Genres.Documentary };   // single source of
 var sciFi       = new Genre { Name = "Sci-Fi" };
 context.Genres.AddRange(drama, comedy, documentary, sciFi);
 
-// --- Actors (ids 1..5) ---
+// --- Actors (ids 1..14) ---
 var hanks     = new Actor { Name = "Tom Hanks",          BirthYear = 1956 };
 var robbins   = new Actor { Name = "Tim Robbins",        BirthYear = 1958 };
 var freeman   = new Actor { Name = "Morgan Freeman",     BirthYear = 1937 };
 var johansson = new Actor { Name = "Scarlett Johansson", BirthYear = 1984 };
 var murray    = new Actor { Name = "Bill Murray",        BirthYear = 1950 };
-context.Actors.AddRange(hanks, robbins, freeman, johansson, murray);
+// extra cast (ids 6..14) so the Documentary can hold 10 actors and the cap is testable (Step 25)
+var attenborough = new Actor { Name = "David Attenborough", BirthYear = 1926 };
+var herzog       = new Actor { Name = "Werner Herzog",      BirthYear = 1942 };
+var weaver       = new Actor { Name = "Sigourney Weaver",   BirthYear = 1949 };
+var jones        = new Actor { Name = "James Earl Jones",   BirthYear = 1931 };
+var irons        = new Actor { Name = "Jeremy Irons",       BirthYear = 1948 };
+var mirren       = new Actor { Name = "Helen Mirren",       BirthYear = 1945 };
+var neeson       = new Actor { Name = "Liam Neeson",        BirthYear = 1952 };
+var blanchett    = new Actor { Name = "Cate Blanchett",     BirthYear = 1969 };
+var elba         = new Actor { Name = "Idris Elba",         BirthYear = 1972 };
+context.Actors.AddRange(hanks, robbins, freeman, johansson, murray,
+    attenborough, herzog, weaver, jones, irons, mirren, neeson, blanchett, elba);
 
 // --- Movies (ids 1..6) — varied genres, shared actors, uneven review counts ---
 var movies = new List<Movie>
@@ -1954,7 +1965,8 @@ var movies = new List<Movie>
     {
         Title = "March of the Penguins", Year = 2005, Duration = 80,
         Genres = { documentary },
-        Actors = { freeman },   // narrator
+        // 10 actors — at the Documentary cap, so an 11th POST → 400 (Step 25)
+        Actors = { freeman, attenborough, herzog, weaver, jones, irons, mirren, neeson, blanchett, elba },
         Reviews = { new Review { ReviewerName = "Gil", Comment = "Beautiful.", Rating = 4 } }
     },
     new()
@@ -1988,7 +2000,7 @@ and `Forrest Gump`/`Drama` stay at id `1`, so the earlier verify steps still hol
 | Entity | Ids (fresh DB) |
 |---|---|
 | Genres | 1 Drama · 2 Comedy · 3 Documentary · 4 Sci-Fi |
-| Actors | 1 Tom Hanks · 2 Tim Robbins · 3 Morgan Freeman · 4 Scarlett Johansson · 5 Bill Murray |
+| Actors | 1 Tom Hanks · 2 Tim Robbins · 3 Morgan Freeman · 4 Scarlett Johansson · 5 Bill Murray · 6–14 extra cast (Attenborough…Elba, on the Documentary) |
 | Movies | 1 Forrest Gump · 2 Shawshank · 3 Lost in Translation · 4 Groundhog Day · 5 March of the Penguins · 6 Her |
 
 Drop and re-run so the new seed takes effect (the guard skips seeding if any movie already exists):
@@ -2293,20 +2305,84 @@ dotnet run --project MovieApi
 
 ### Step 25: Enforce the Documentary caps
 
-Rule 5: if `Documentary` is among a movie's genres, cap actors at 10 and budget at 1,000,000 (ADR 0002).
+> Del 6 rule 5: if `Documentary` is among a movie's genres, cap **actors at 10** and **budget at
+> 1,000,000** (ADR 0002). Only the **actor cap** is place-able now — `Budget` has no write path until
+> Step 26, so that half moves there (note at the end). Both halves share one `IsDocumentary` helper.
+
+**25.1 — A shared `IsDocumentary` rule helper.**
+It's used by `ActorService` now and the PATCH path in Step 26, so it can't be `private` to one class.
+Put it in a small shared helper that reuses the `Genres.Documentary` constant (Step 20):
 
 ```csharp
-// MovieServices — reusable guard
-private static bool IsDocumentary(Movie m) => m.Genres.Any(g => g.Name == Genres.Documentary);
+// MovieServices/MovieRules.cs
+using MovieCore.Models;
+namespace MovieServices;
 
-if (IsDocumentary(movie) && movie.Actors.Count > 10)
-    throw new BusinessRuleException("A documentary may have at most 10 actors.");
-if (IsDocumentary(movie) && movie.Details?.Budget > 1_000_000m)
-    throw new BusinessRuleException("A documentary's budget may not exceed 1,000,000.");
+internal static class MovieRules
+{
+    public static bool IsDocumentary(Movie movie) =>
+        movie.Genres.Any(g => g.Name == Genres.Documentary);
+}
 ```
 
-**Verify:** a Documentary with an 11th actor → 400; budget 1,000,001 → 400; same numbers on a non-Documentary → OK.
-**Commit:** `feat(services): enforce Documentary caps`
+**25.2 — Load `Genres` where the cap runs, then guard the actor cap.**
+`AddToMovieAsync` loads the movie via `GetWithActorsAsync`, which currently includes **only `Actors`** —
+so `movie.Genres` is empty there and `IsDocumentary` always returns `false` (the cap silently never fires).
+Add the `Genres` include first:
+
+```csharp
+// MovieData/Repositories/MovieRepository.cs  (add the Genres include)
+public Task<Movie?> GetWithActorsAsync(int movieId) => context.Movies
+    .Include(m => m.Actors)
+    .Include(m => m.Genres)
+    .FirstOrDefaultAsync(m => m.Id == movieId);
+```
+
+Then the cap in `AddToMovieAsync`, placed **before** the Add next to the duplicate guard — `>= 10`, so
+the 11th can't be added (full method shown; the duplicate guard is the one from Step 19):
+
+```csharp
+// MovieServices/ActorService.cs
+public async Task AddToMovieAsync(int movieId, int actorId)
+{
+    var movie = await uow.Movies.GetWithActorsAsync(movieId)
+                ?? throw new NotFoundException($"Movie {movieId} not found");
+    var actor = await uow.Actors.GetAsync(actorId)
+                ?? throw new NotFoundException($"Actor {actorId} not found");
+
+    if (movie.Actors.Any(a => a.Id == actorId))
+        throw new BusinessRuleException($"Actor {actorId} is already in movie {movieId}.");
+
+    if (MovieRules.IsDocumentary(movie) && movie.Actors.Count >= 10)
+        throw new BusinessRuleException("A documentary may have at most 10 actors.");
+
+    movie.Actors.Add(actor);
+    await uow.CompleteAsync();
+}
+```
+
+**25.3 — Seed the Documentary with 10 actors (folded into Step 22.1).**
+March of the Penguins (movie 5) now seeds 10 actors, so a single POST of an 11th → 400 — no need to add
+nine by hand. Re-apply Step 22.1 if you seeded earlier, then drop + re-run:
+
+```bash
+dotnet ef database drop -f --project MovieData --startup-project MovieApi
+dotnet run --project MovieApi
+```
+
+**Verify:**
+
+| Action | Result |
+|---|---|
+| `POST /api/movies/5/actors/4` — add an 11th actor to the Documentary | **400** — "at most 10 actors" |
+| `POST /api/movies/1/actors/4` — Forrest Gump is **not** a Documentary | **204** — cap doesn't apply |
+
+**Commit:** `feat(services): enforce Documentary actor cap`
+
+> **Budget cap deferred to Step 26.** The "Documentary budget ≤ 1,000,000" half needs a budget to guard,
+> and `MovieDetails.Budget` only becomes writable through the PATCH in Step 26. Enforce it there in
+> `ApplyPatchAsync`, reusing `MovieRules.IsDocumentary` — alongside Step 23's negative-budget rule. (That
+> path loads `Details` + `Genres`, which the actor-cap path here doesn't need.)
 
 ### Step 26: Add PATCH for Movie + MovieDetails
 
