@@ -25,8 +25,15 @@ public class ReviewService(IUnitOfWork uow) : IReviewService
 
     public async Task<ReviewDto> CreateAsync(int movieId, ReviewDto dto)
     {
-        if (!await uow.Movies.AnyAsync(movieId))
-            throw new NotFoundException($"Movie {movieId} not found");
+        var movie = await uow.Movies.GetWithReviewsAsync(movieId)
+                    ?? throw new NotFoundException($"Movie {movieId} not found");
+
+        if (movie.Reviews.Count >= 10)
+            throw new BusinessRuleException("A movie can only have 10 reviews.");
+
+        if (DateTime.UtcNow.Year - movie.Year > 20 && movie.Reviews.Count >= 5)
+            throw new BusinessRuleException("A movie can only have 5 reviews if it is older than 20 years.");
+
         var review = new Review
         {
             MovieId = movieId,

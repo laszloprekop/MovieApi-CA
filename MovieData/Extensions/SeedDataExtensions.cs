@@ -30,67 +30,74 @@ public static class SeedDataExtensions
 
 // --- Movies (ids 1..6) — varied genres, shared actors, uneven review counts ---
         var movies = new List<Movie>
+{
+    new()
+    {
+        Title = "Forrest Gump", Year = 1994, Duration = 142,
+        Genres = { drama },
+        Actors = { hanks },
+        Details = new MovieDetails { Synopsis = "Life is like a box of chocolates", Language = "English", Budget = 55_000_000m },
+        Reviews =
         {
-            new()
-            {
-                Title = "Forrest Gump", Year = 1994, Duration = 142,
-                Genres = { drama },
-                Actors = { hanks },
-                Details = new MovieDetails
-                    { Synopsis = "Life is like a box of chocolates", Language = "English", Budget = 55_000_000m },
-                Reviews =
-                {
-                    new Review { ReviewerName = "Alice", Comment = "Classic!", Rating = 5 },
-                    new Review { ReviewerName = "Bob", Comment = "Touching.", Rating = 4 }
-                }
-            },
-            new()
-            {
-                Title = "The Shawshank Redemption", Year = 1994, Duration = 142,
-                Genres = { drama },
-                Actors = { robbins, freeman },
-                Reviews =
-                {
-                    new Review { ReviewerName = "Cara", Comment = "Masterpiece.", Rating = 5 },
-                    new Review { ReviewerName = "Dan", Comment = "Hopeful.", Rating = 5 },
-                    new Review { ReviewerName = "Eve", Comment = "Slow start.", Rating = 3 }
-                }
-            },
-            new()
-            {
-                Title = "Lost in Translation", Year = 2003, Duration = 102,
-                Genres = { drama, comedy },
-                Actors = { johansson, murray },
-                Reviews = { new Review { ReviewerName = "Finn", Comment = "Quietly great.", Rating = 4 } }
-            },
-            new()
-            {
-                Title = "Groundhog Day", Year = 1993, Duration = 101,
-                Genres = { comedy },
-                Actors = { murray }
-                // no reviews — exercises the zero-review case (Step 24)
-            },
-            new()
-            {
-                Title = "March of the Penguins", Year = 2005, Duration = 80,
-                Genres = { documentary },
-                Actors = { freeman }, // narrator
-                Reviews = { new Review { ReviewerName = "Gil", Comment = "Beautiful.", Rating = 4 } }
-            },
-            new()
-            {
-                Title = "Her", Year = 2013, Duration = 126,
-                Genres = { drama, sciFi },
-                Actors = { johansson },
-                Reviews =
-                {
-                    new Review { ReviewerName = "Hana", Comment = "Melancholic.", Rating = 5 },
-                    new Review { ReviewerName = "Ivan", Comment = "Thought-provoking.", Rating = 4 }
-                }
-            }
-        };
+            new Review { ReviewerName = "Alice", Comment = "Classic!", Rating = 5 },
+            new Review { ReviewerName = "Bob",   Comment = "Touching.", Rating = 4 }
+        }
+    },
+    new()
+    {
+        Title = "The Shawshank Redemption", Year = 1994, Duration = 142,
+        Genres = { drama },
+        Actors = { robbins, freeman },
+        Reviews =
+        {
+            new Review { ReviewerName = "Cara", Comment = "Masterpiece.", Rating = 5 },
+            new Review { ReviewerName = "Dan",  Comment = "Hopeful.",     Rating = 5 },
+            new Review { ReviewerName = "Eve",  Comment = "Slow start.",  Rating = 3 }
+        }
+    },
+    new()
+    {
+        Title = "Lost in Translation", Year = 2003, Duration = 102,
+        Genres = { drama, comedy },
+        Actors = { johansson, murray },
+        Reviews = { new Review { ReviewerName = "Finn", Comment = "Quietly great.", Rating = 4 } }
+    },
+    new()
+    {
+        Title = "Groundhog Day", Year = 1993, Duration = 101,
+        Genres = { comedy },
+        Actors = { murray }
+        // no reviews — exercises the zero-review case (Step 24)
+    },
+    new()
+    {
+        Title = "March of the Penguins", Year = 2005, Duration = 80,
+        Genres = { documentary },
+        Actors = { freeman },   // narrator
+        Reviews = { new Review { ReviewerName = "Gil", Comment = "Beautiful.", Rating = 4 } }
+    },
+    new()
+    {
+        Title = "Her", Year = 2013, Duration = 126,
+        Genres = { drama, sciFi },
+        Actors = { johansson },
+        // 9 reviews — recent movie (2013), so the 10-cap applies; one more POST hits 10, the next 400s
+        Reviews =
+        {
+            new Review { ReviewerName = "Hana", Comment = "Melancholic.",          Rating = 5 },
+            new Review { ReviewerName = "Ivan", Comment = "Thought-provoking.",     Rating = 4 },
+            new Review { ReviewerName = "Judy", Comment = "Beautifully shot.",      Rating = 5 },
+            new Review { ReviewerName = "Kyle", Comment = "Unsettling and tender.", Rating = 4 },
+            new Review { ReviewerName = "Lena", Comment = "Loved the score.",       Rating = 5 },
+            new Review { ReviewerName = "Milo", Comment = "A touch slow.",          Rating = 3 },
+            new Review { ReviewerName = "Nora", Comment = "The future feels real.", Rating = 4 },
+            new Review { ReviewerName = "Omar", Comment = "Heartbreaking.",         Rating = 5 },
+            new Review { ReviewerName = "Pia",  Comment = "Bittersweet.",           Rating = 4 }
+        }
+    }
+};
 
-        context.Movies.AddRange(movies);
-        context.SaveChanges();
+context.Movies.AddRange(movies);
+context.SaveChanges();
     }
 }

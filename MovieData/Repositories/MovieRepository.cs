@@ -28,4 +28,5 @@ public class MovieRepository(MovieContext context) : IMovieRepository
     public void Remove(Movie movie) => context.Movies.Remove(movie);
     public Task<bool> TitleExistsAsync(string title, int? excludeId = null) => 
         context.Movies.AnyAsync(m => m.Title == title && m.Id != excludeId);
+    public Task<Movie?> GetWithReviewsAsync(int id) => context.Movies.Include(m => m.Reviews).FirstOrDefaultAsync(m => m.Id == id);
 }

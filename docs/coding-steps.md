@@ -1962,10 +1962,18 @@ var movies = new List<Movie>
         Title = "Her", Year = 2013, Duration = 126,
         Genres = { drama, sciFi },
         Actors = { johansson },
+        // 9 reviews — recent movie (2013), so the 10-cap applies; one more POST hits 10, the next 400s (Step 24)
         Reviews =
         {
-            new Review { ReviewerName = "Hana", Comment = "Melancholic.",      Rating = 5 },
-            new Review { ReviewerName = "Ivan", Comment = "Thought-provoking.", Rating = 4 }
+            new Review { ReviewerName = "Hana", Comment = "Melancholic.",          Rating = 5 },
+            new Review { ReviewerName = "Ivan", Comment = "Thought-provoking.",     Rating = 4 },
+            new Review { ReviewerName = "Judy", Comment = "Beautifully shot.",      Rating = 5 },
+            new Review { ReviewerName = "Kyle", Comment = "Unsettling and tender.", Rating = 4 },
+            new Review { ReviewerName = "Lena", Comment = "Loved the score.",       Rating = 5 },
+            new Review { ReviewerName = "Milo", Comment = "A touch slow.",          Rating = 3 },
+            new Review { ReviewerName = "Nora", Comment = "The future feels real.", Rating = 4 },
+            new Review { ReviewerName = "Omar", Comment = "Heartbreaking.",         Rating = 5 },
+            new Review { ReviewerName = "Pia",  Comment = "Bittersweet.",           Rating = 4 }
         }
     }
 };
@@ -2203,22 +2211,85 @@ public async Task UpdateAsync(int id, MovieUpdateDto dto)
 
 ### Step 24: Enforce the review-count rules
 
-Rules 1 and 4 (sync half): max 10 reviews; max 5 if the movie is older than 20 years.
+> Del 6 rules 1 & 4 (sync half): a movie may have at most **10** reviews; if it's **older than 20 years**,
+> at most **5**. Both live in the service as `BusinessRuleException` → 400. They go in
+> `ReviewService.CreateAsync` (there is **no** `AddReviewAsync`), and they need the movie's reviews loaded.
+
+**24.1 — Add a `GetWithReviewsAsync` lookup to the Movie repository.**
+The cap needs `movie.Reviews` (and `Year`) loaded; the current existence check (`AnyAsync`) only returns a
+bool, and without an `Include` the collection is empty so the rule never fires. Add it (mirrors
+`GetWithActorsAsync`):
 
 ```csharp
-// MovieServices/ReviewService.cs   (in AddReviewAsync)
-var movie = await uow.Movies.GetWithReviewsAsync(movieId)
-            ?? throw new NotFoundException($"Movie {movieId} not found.");
-
-if (movie.Reviews.Count > 10) throw new BusinessRuleException("A movie may have at most 10 reviews.");  // ← mistake: off-by-one — this allows an 11th; the cap is reached at 10 (use >=)
-
-var ageOver20 = DateTime.UtcNow.Year - movie.Year > 20;
-if (ageOver20 && movie.Reviews.Count >= 5)
-    throw new BusinessRuleException("A movie older than 20 years may have at most 5 reviews.");
+// MovieCore/DomainContracts/IMovieRepository.cs   (add)
+Task<Movie?> GetWithReviewsAsync(int id);
 ```
 
-**Verify:** adding the 11th review → 400; on a >20-year movie, the 6th → 400.
+```csharp
+// MovieData/Repositories/MovieRepository.cs   (add)
+public Task<Movie?> GetWithReviewsAsync(int id) =>
+    context.Movies.Include(m => m.Reviews).FirstOrDefaultAsync(m => m.Id == id);
+```
+
+**24.2 — Enforce both caps in `CreateAsync`.**
+Swap the `AnyAsync` existence check for the loaded movie, then guard before building the review. Full
+method (note **`>= 10`**, not `> 10` — the cap is *reached* at 10, so `>` would let an 11th slip through):
+
+```csharp
+// MovieServices/ReviewService.cs
+public async Task<ReviewDto> CreateAsync(int movieId, ReviewDto dto)
+{
+    var movie = await uow.Movies.GetWithReviewsAsync(movieId)
+                ?? throw new NotFoundException($"Movie {movieId} not found");
+
+    if (movie.Reviews.Count >= 10)
+        throw new BusinessRuleException("A movie may have at most 10 reviews.");
+
+    if (DateTime.UtcNow.Year - movie.Year > 20 && movie.Reviews.Count >= 5)
+        throw new BusinessRuleException("A movie older than 20 years may have at most 5 reviews.");
+
+    var review = new Review
+    {
+        MovieId = movieId,
+        ReviewerName = dto.ReviewerName,
+        Comment = dto.Comment,
+        Rating = dto.Rating
+    };
+    uow.Reviews.Add(review);
+    await uow.CompleteAsync();
+    dto.Id = review.Id;
+    return dto;
+}
+```
+
+> **Why the order is safe.** An old movie is capped at 5, so it can never reach 10 — the 5-check trips
+> first. The 10-check therefore only ever bites a *recent* movie, so the two guards can stay in this order.
+> (Age is by release year — `UtcNow.Year - movie.Year > 20` — so the boundary is year 2006. Coarse, but
+> fine for the exercise.)
+
+**24.3 — Seed Her with 9 reviews (already folded into Step 22.1).**
+Her (2013) is recent, so the 10-cap applies to it. With 9 seeded reviews the **10th** POST succeeds and the
+**11th** → 400, so you can prove the cap with two requests instead of firing ten by hand. If you seeded
+before this step, re-apply Step 22.1's Her block and drop + re-run:
+
+```bash
+dotnet ef database drop -f --project MovieData --startup-project MovieApi
+dotnet run --project MovieApi
+```
+
+**Verify (against the updated seed):**
+
+| Action | Result |
+|---|---|
+| `POST /api/movies/6/reviews` (Her, has 9) → the 10th | **201 Created** |
+| repeat that POST → the 11th | **400** — "at most 10 reviews" |
+| `POST /api/movies/1/reviews` (Forrest Gump, 1994, has 2) ×3 → reaches 5 | **201** each |
+| one more → the 6th on a >20-year movie | **400** — "at most 5 reviews" |
+
 **Commit:** `feat(services): enforce review-count rules`
+
+> **Optional:** to make the 5-cap a one-POST check too, seed an *old* movie with 4 reviews
+> (e.g. Lost in Translation, 2003) — same trick as Her.
 
 ### Step 25: Enforce the Documentary caps
 

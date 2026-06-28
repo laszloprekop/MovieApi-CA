@@ -244,3 +244,27 @@ Content-Type: application/json
 POST {{MovieApi_HostAddress}}/api/movies/1/actors/1
 
 ###
+
+### Step 24 — 10-cap on Her (id 6, 2013, seeded 9): run TWICE — 1st = 10th review 201, 2nd = 11th 400
+POST {{MovieApi_HostAddress}}/api/movies/6/reviews
+Content-Type: application/json
+
+{
+  "reviewerName": "Quinn",
+  "comment": "Late to this one, still moved.",
+  "rating": 4
+}
+
+###
+
+### Step 24 — 5-cap on Forrest Gump (id 1, 1994, seeded 2): run 4× — first 3 = 201 (reach 5), 4th = 6th → 400
+POST {{MovieApi_HostAddress}}/api/movies/1/reviews
+Content-Type: application/json
+
+{
+  "reviewerName": "Rex",
+  "comment": "Still holds up.",
+  "rating": 5
+}
+
+###
