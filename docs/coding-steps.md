@@ -2545,38 +2545,201 @@ public async Task<IActionResult> Patch(int id, [FromBody] JsonPatchDocument<Movi
 
 ### Step 27: Add the test project and mock the data layer
 
-> **New concept: NSubstitute.** Fakes `IUnitOfWork` and its repositories so service logic is tested in isolation — no EF, no database.
+> **New concept: NSubstitute.** Fakes `IUnitOfWork` and its repositories so service logic is tested in
+> isolation — no EF, no database. Two behaviours you'll rely on: a property returning an interface
+> (`uow.Movies`) is **auto-substituted recursively** (same fake instance each access — no separate setup),
+> and `Task`-returning methods like `CompleteAsync()` **auto-return a completed task**, so `await` won't NRE.
+
+**27.1 — Create the project and wire it up.**
+The solution is `MovieApi.slnx`, so point `dotnet sln add` at the `.csproj`:
 
 ```bash
 dotnet new xunit -n MovieServices.Tests -f net10.0
-dotnet sln add MovieServices.Tests
+dotnet sln add MovieServices.Tests/MovieServices.Tests.csproj
 dotnet add MovieServices.Tests/MovieServices.Tests.csproj reference MovieServices/MovieServices.csproj MovieContracts/MovieContracts.csproj MovieCore/MovieCore.csproj
 dotnet add MovieServices.Tests/MovieServices.Tests.csproj package NSubstitute
+rm MovieServices.Tests/UnitTest1.cs   # delete the scaffold stub so it doesn't count as a "passing" test
 ```
 
-**Verify:** `dotnet test` runs (zero tests yet).
+> **Why no `MovieData` / AutoMapper reference.** We **substitute** `IMapper` in the tests rather than build
+> the real `MovieProfile` — service logic stays isolated and AutoMapper's license key never enters the test
+> project. The `IMapper` *type* is still available because the `AutoMapper` package flows in **transitively**
+> through the `MovieServices` reference. The real profile is already validated at API startup by
+> `AssertConfigurationIsValid` (Program.cs), so it needs no separate unit test.
+
+> **Check the scaffold.** On the .NET 10 SDK, `dotnet new xunit` may generate an **xUnit v3 /
+> Microsoft.Testing.Platform** project (`.csproj` references `xunit.v3`, not `xunit`). The test code below is
+> identical either way and `dotnet test` is still the runner — just confirm it restored/built.
+
+**Verify:** `dotnet test` builds and runs; it reports **no tests** until Step 28 — that's expected, not a failure.
 **Commit:** `test(services): add test project with NSubstitute`
 
-### Step 28: Write the four service tests
+### Step 28: Write the service tests
 
-Cover the grilled set: 11th review rejected, Documentary caps, duplicate title + missing id, happy-path create mapping.
+> Cover Brief Del 10 (≥3): the review 10-cap, the Documentary actor cap (+ a non-Documentary control),
+> the error paths (duplicate title, missing id), and a happy-path create. **Match the real constructors** —
+> `ReviewService(uow)` and `ActorService(uow)` take **no** mapper; only `MovieService(uow, mapper)` does.
+
+**28.1 — Two tiny builders to keep the arrange blocks short.**
 
 ```csharp
-// MovieServices.Tests/ReviewServiceTests.cs
-[Fact]
-public async Task AddReview_WhenMovieHas10Reviews_Throws()
-{
-    var uow = Substitute.For<IUnitOfWork>();
-    uow.Movies.GetWithReviewsAsync(1).Returns(MovieWith(10, reviews: true));
-    var sut = new ReviewService(uow, _mapper);
+// MovieServices.Tests/TestData.cs
+using MovieCore.Models;
+namespace MovieServices.Tests;
 
-    await Assert.ThrowsAsync<BusinessRuleException>(() => sut.AddReviewAsync(1, new ReviewCreateDto()));
+internal static class TestData
+{
+    public static Movie MovieWithReviews(int count, int? year = null)
+    {
+        var movie = new Movie { Id = 1, Title = "Test", Year = year ?? DateTime.UtcNow.Year };
+        for (var i = 0; i < count; i++)
+            movie.Reviews.Add(new Review { ReviewerName = $"R{i}", Comment = "c", Rating = 3 });
+        return movie;
+    }
+
+    public static Movie MovieWithActors(int count, bool documentary)
+    {
+        var movie = new Movie { Id = documentary ? 5 : 1, Title = "Test", Year = 2005 };
+        if (documentary) movie.Genres.Add(new Genre { Name = Genres.Documentary });
+        for (var i = 1; i <= count; i++)
+            movie.Actors.Add(new Actor { Id = i, Name = $"A{i}" });
+        return movie;
+    }
 }
 ```
 
-Add one test each for: Documentary 11th actor/over-budget (+ a non-Documentary control), duplicate title, missing id → `NotFoundException`, and a valid create returning a correctly mapped `MovieDto`.
+**28.2 — Review 10-cap (`ReviewService`, no mapper).**
 
-**Verify:** `dotnet test` — all four pass. (Brief Del 10 wants ≥3.)
+```csharp
+// MovieServices.Tests/ReviewServiceTests.cs
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Exceptions;
+using NSubstitute;
+using Xunit;
+
+namespace MovieServices.Tests;
+
+public class ReviewServiceTests
+{
+    [Fact]
+    public async Task CreateAsync_WhenMovieAlreadyHas10Reviews_Throws()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.GetWithReviewsAsync(1).Returns(TestData.MovieWithReviews(10));   // recent year → 10-cap
+        var sut = new ReviewService(uow);
+
+        await Assert.ThrowsAsync<BusinessRuleException>(
+            () => sut.CreateAsync(1, new ReviewDto { ReviewerName = "X", Comment = "c", Rating = 4 }));
+    }
+}
+```
+
+**28.3 — Documentary actor cap + non-Documentary control (`ActorService`, no mapper).**
+
+```csharp
+// MovieServices.Tests/ActorServiceTests.cs
+using MovieCore.DomainContracts;
+using MovieCore.Exceptions;
+using MovieCore.Models;
+using NSubstitute;
+using Xunit;
+
+namespace MovieServices.Tests;
+
+public class ActorServiceTests
+{
+    [Fact]
+    public async Task AddToMovieAsync_DocumentaryAt10Actors_Throws()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.GetWithActorsAsync(5).Returns(TestData.MovieWithActors(10, documentary: true));
+        uow.Actors.GetAsync(99).Returns(new Actor { Id = 99, Name = "New" });
+        var sut = new ActorService(uow);
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => sut.AddToMovieAsync(5, 99));
+    }
+
+    [Fact]
+    public async Task AddToMovieAsync_NonDocumentaryAt10Actors_Saves()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.GetWithActorsAsync(1).Returns(TestData.MovieWithActors(10, documentary: false));
+        uow.Actors.GetAsync(99).Returns(new Actor { Id = 99, Name = "New" });
+        var sut = new ActorService(uow);
+
+        await sut.AddToMovieAsync(1, 99);        // no exception — cap doesn't apply
+        await uow.Received(1).CompleteAsync();    // and it persisted
+    }
+}
+```
+
+**28.4 — Create errors + happy path (`MovieService`, with a substituted `IMapper`).**
+
+```csharp
+// MovieServices.Tests/MovieServiceTests.cs
+using AutoMapper;                       // IMapper — available transitively via MovieServices
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Exceptions;
+using MovieCore.Models;
+using NSubstitute;
+using Xunit;
+
+namespace MovieServices.Tests;
+
+public class MovieServiceTests
+{
+    [Fact]
+    public async Task CreateAsync_DuplicateTitle_Throws()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.TitleExistsAsync("Dup", Arg.Any<int?>()).Returns(true);
+        var sut = new MovieService(uow, Substitute.For<IMapper>());
+
+        await Assert.ThrowsAsync<BusinessRuleException>(
+            () => sut.CreateAsync(new MovieCreateDto { Title = "Dup", GenreIds = [1] }));
+    }
+
+    [Fact]
+    public async Task GetAsync_MissingId_ThrowsNotFound()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.GetAsync(404).Returns((Movie?)null);
+        var sut = new MovieService(uow, Substitute.For<IMapper>());
+
+        await Assert.ThrowsAsync<NotFoundException>(() => sut.GetAsync(404));
+    }
+
+    [Fact]
+    public async Task CreateAsync_Valid_ReturnsMappedDtoAndSaves()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        var mapper = Substitute.For<IMapper>();
+        uow.Movies.TitleExistsAsync("New", Arg.Any<int?>()).Returns(false);          // Step 23 collaborator
+        uow.Genres.GetByIdsAsync(Arg.Any<IEnumerable<int>>())
+           .Returns(new List<Genre> { new() { Id = 1, Name = "Drama" } });            // Step 21 collaborator
+
+        var entity = new Movie { Title = "New", Year = 2020 };
+        mapper.Map<Movie>(Arg.Any<MovieCreateDto>()).Returns(entity);
+        mapper.Map<MovieDto>(entity).Returns(new MovieDto { Id = 7, Title = "New" });
+
+        var sut = new MovieService(uow, mapper);
+
+        var result = await sut.CreateAsync(new MovieCreateDto { Title = "New", GenreIds = [1] });
+
+        Assert.Equal(7, result.Id);
+        await uow.Received(1).CompleteAsync();
+    }
+}
+```
+
+> The create test substitutes `IMapper`, so it asserts the **flow** (rules pass → entity added → saved →
+> mapped DTO returned), not AutoMapper's field-by-field output — that's covered at startup by
+> `AssertConfigurationIsValid`. Note the extra collaborators `CreateAsync` has needed since Steps 21/23:
+> `TitleExistsAsync` and `Genres.GetByIdsAsync` must both be stubbed or the method throws before mapping.
+
+**Verify:** `dotnet test` — all 5 pass (Brief Del 10 wants ≥3).
 **Commit:** `test(services): cover review cap, documentary caps, errors, create mapping`
 
 ---
