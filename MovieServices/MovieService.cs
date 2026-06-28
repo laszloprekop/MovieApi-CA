@@ -73,6 +73,9 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
 
     public async Task<MovieDto> CreateAsync(MovieCreateDto dto)
     {
+        if (await uow.Movies.TitleExistsAsync(dto.Title))
+            throw new BusinessRuleException($"Movie with title {dto.Title} already exists.");
+
         if (dto.GenreIds is null || dto.GenreIds.Count == 0)
             throw new BusinessRuleException("A movie must have at least one genre.");
 
@@ -91,6 +94,8 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
     {
         var movie = await uow.Movies.GetAsync(id)
                     ?? throw new NotFoundException($"Movie {id} not found");
+        if (await uow.Movies.TitleExistsAsync(dto.Title, id))
+            throw new BusinessRuleException($"Movie with title {dto.Title} already exists.");
         movie.Title = dto.Title;
         movie.Year = dto.Year;
         movie.Duration = dto.Duration;

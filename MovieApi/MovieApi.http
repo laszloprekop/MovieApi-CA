@@ -42,27 +42,26 @@ Accept: application/json
 
 ###
 
-### POST create new movie
+### POST create new movie (fresh title — Shawshank is now seeded and would 400 on the title rule)
 POST {{MovieApi_HostAddress}}/api/movies
 Content-Type: application/json
 
 {
-  "title": "The Shawshank Redemption",
-  "year": 1994,
+  "title": "Inception",
+  "year": 2010,
   "genreIds": [1],
-  "duration": 142
+  "duration": 148
 }
 
 ###
 
-### PUT update movie
+### PUT update movie (MovieUpdateDto = title/year/duration; Genre field removed in Step 23.3)
 PUT {{MovieApi_HostAddress}}/api/movies/1
 Content-Type: application/json
 
 {
   "title": "Forrest Gump Updated",
   "year": 1994,
-  "genreIds": [1],
   "duration": 142
 }
 
@@ -175,5 +174,73 @@ Accept: application/json
 ### PageSize clamp — request 110, server caps at 100; expect all 6; X-Pagination PageSize 100
 GET {{MovieApi_HostAddress}}/api/movies?pageSize=110
 Accept: application/json
+
+###
+
+### duplicate title on create — expect 400 "A movie titled 'Forrest Gump' already exists."
+POST {{MovieApi_HostAddress}}/api/movies
+Content-Type: application/json
+
+{
+  "title": "Forrest Gump",
+  "year": 1994,
+  "genreIds": [1],
+  "duration": 142
+}
+
+###
+
+### duplicate title is case-insensitive (SQL collation) — expect 400
+POST {{MovieApi_HostAddress}}/api/movies
+Content-Type: application/json
+
+{
+  "title": "forrest gump",
+  "year": 1994,
+  "genreIds": [1],
+  "duration": 142
+}
+
+###
+
+### fresh title — expect 201 Created
+POST {{MovieApi_HostAddress}}/api/movies
+Content-Type: application/json
+
+{
+  "title": "The Matrix",
+  "year": 1999,
+  "genreIds": [1, 4],
+  "duration": 136
+}
+
+###
+
+### PUT keeping the movie's own title — expect 204 (self-exclusion, no false collision)
+PUT {{MovieApi_HostAddress}}/api/movies/1
+Content-Type: application/json
+
+{
+  "title": "Forrest Gump",
+  "year": 1994,
+  "duration": 142
+}
+
+###
+
+### PUT renaming movie 1 to another movie's title ("Her", id 6) — expect 400 duplicate
+PUT {{MovieApi_HostAddress}}/api/movies/1
+Content-Type: application/json
+
+{
+  "title": "Her",
+  "year": 1994,
+  "duration": 142
+}
+
+###
+
+### actor-already-assigned (rule already enforced in Step 19) — run TWICE: 1st 204, 2nd 400
+POST {{MovieApi_HostAddress}}/api/movies/1/actors/1
 
 ###
