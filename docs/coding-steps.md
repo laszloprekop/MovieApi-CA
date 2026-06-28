@@ -2386,31 +2386,161 @@ dotnet run --project MovieApi
 
 ### Step 26: Add PATCH for Movie + MovieDetails
 
-> **New concept: `JsonPatchDocument`.** A list of `replace`/`add`/`remove` ops. It needs Newtonsoft (the usual reason `[FromBody]` won't bind). We patch one **flat** `MoviePatchDto` spanning both entities.
+> **New concept: `JsonPatchDocument`.** A list of `replace`/`add`/`remove` ops (RFC 6902). It comes from
+> the `Microsoft.AspNetCore.Mvc.NewtonsoftJson` package — **not** the shared framework — because it
+> depends on Newtonsoft. We patch one **flat** `MoviePatchDto` spanning `Movie` + its 1:1 `MovieDetails`.
+> This step also finally owns the two **budget rules** deferred from Steps 23 and 25.
+
+**26.1 — Add the package (to MoviePresentation) and wire Newtonsoft.**
+The controller that references `JsonPatchDocument<T>` lives in **MoviePresentation**, so the package goes
+there (it flows transitively to MovieApi for `AddNewtonsoftJson()`):
 
 ```bash
-dotnet add MovieApi/MovieApi.csproj package Microsoft.AspNetCore.Mvc.NewtonsoftJson --version 10.0.9
+dotnet add MoviePresentation/MoviePresentation.csproj package Microsoft.AspNetCore.Mvc.NewtonsoftJson --version 10.0.9
 ```
 
 ```csharp
-// MovieApi/Program.cs
-builder.Services.AddControllers().AddNewtonsoftJson();   // chain onto the existing AddControllers
+// MovieApi/Program.cs — chain onto the EXISTING registration; keep AddApplicationPart!
+builder.Services.AddControllers()
+    .AddApplicationPart(typeof(MoviePresentation.PresentationAssemblyReference).Assembly)
+    .AddNewtonsoftJson();
 ```
+
+> ⚠️ `AddNewtonsoftJson()` swaps the **whole API's** JSON formatter to Newtonsoft, not just this endpoint.
+> Default casing stays camelCase so responses look the same; your `X-Pagination` header uses
+> `System.Text.Json` explicitly and is unaffected.
+
+**26.2 — A flat `MoviePatchDto` spanning both entities.**
+Validation attributes here are what `TryValidateModel` checks **after** the patch is applied. Note
+**no attribute on `Budget`** — the budget rules are `BusinessRuleException`s in the service (Steps 23/25),
+so the value must reach the service rather than be caught by model validation.
+
+```csharp
+// MovieCore/DTOs/MoviePatchDto.cs
+using System.ComponentModel.DataAnnotations;
+namespace MovieCore.DTOs;
+
+public class MoviePatchDto
+{
+    [Required, StringLength(200)]
+    public string Title { get; set; } = string.Empty;
+
+    [Range(1888, 2100)]
+    public int Year { get; set; }
+
+    [Range(1, 1000)]
+    public int Duration { get; set; }
+
+    // flattened from the 1:1 MovieDetails
+    public string? Synopsis { get; set; }
+    public string? Language { get; set; }
+    public decimal Budget { get; set; }
+}
+```
+
+**26.3 — The two service methods.** Add to the contract, then implement.
+
+```csharp
+// MovieContracts/IMovieService.cs  (add)
+Task<MoviePatchDto> GetPatchModelAsync(int id);
+Task ApplyPatchAsync(int id, MoviePatchDto dto);
+```
+
+`GetPatchModelAsync` builds the flat snapshot the controller patches onto (`GetWithDetailsAsync` loads
+Details + Genres):
+
+```csharp
+// MovieServices/MovieService.cs
+public async Task<MoviePatchDto> GetPatchModelAsync(int id)
+{
+    var movie = await uow.Movies.GetWithDetailsAsync(id)
+                ?? throw new NotFoundException($"Movie {id} not found");
+    return new MoviePatchDto
+    {
+        Title = movie.Title,
+        Year = movie.Year,
+        Duration = movie.Duration,
+        Synopsis = movie.Details?.Synopsis,   // null-safe: most movies have no Details row
+        Language = movie.Details?.Language,
+        Budget = movie.Details?.Budget ?? 0
+    };
+}
+```
+
+`ApplyPatchAsync` re-loads, runs the inherited business rules, writes both entities, and **creates a
+`MovieDetails` row if the movie doesn't have one yet**:
+
+```csharp
+// MovieServices/MovieService.cs
+public async Task ApplyPatchAsync(int id, MoviePatchDto dto)
+{
+    var movie = await uow.Movies.GetWithDetailsAsync(id)
+                ?? throw new NotFoundException($"Movie {id} not found");
+
+    // business rules — title (Step 23), negative budget (Step 23), Documentary cap (Step 25)
+    if (await uow.Movies.TitleExistsAsync(dto.Title, id))
+        throw new BusinessRuleException($"A movie titled '{dto.Title}' already exists.");
+    if (dto.Budget < 0)
+        throw new BusinessRuleException("Budget may not be negative.");
+    if (MovieRules.IsDocumentary(movie) && dto.Budget > 1_000_000m)
+        throw new BusinessRuleException("A documentary's budget may not exceed 1,000,000.");
+
+    movie.Title = dto.Title;
+    movie.Year = dto.Year;
+    movie.Duration = dto.Duration;
+
+    // MovieDetails is 1:1 and may not exist yet — create it (required props set in the initializer)
+    if (movie.Details is null)
+    {
+        movie.Details = new MovieDetails
+        {
+            Synopsis = dto.Synopsis ?? string.Empty,
+            Language = dto.Language ?? string.Empty,
+            Budget = dto.Budget
+        };
+    }
+    else
+    {
+        movie.Details.Synopsis = dto.Synopsis ?? string.Empty;
+        movie.Details.Language = dto.Language ?? string.Empty;
+        movie.Details.Budget = dto.Budget;
+    }
+
+    await uow.CompleteAsync();
+}
+```
+
+> Title check uses `excludeId = id`, so a patch that doesn't touch the title (it still equals the
+> movie's own) can't false-trip — same self-exclusion as Step 23.
+
+**26.4 — The thin controller.**
 
 ```csharp
 // MoviePresentation/Controllers/MoviesController.cs
+using Microsoft.AspNetCore.JsonPatch;   // add at the top — for JsonPatchDocument<T>
+// ...
 [HttpPatch("{id:int}")]
 public async Task<IActionResult> Patch(int id, [FromBody] JsonPatchDocument<MoviePatchDto> patch)
 {
-    var dto = await services.MovieService.GetPatchModelAsync(id);   // flat: Title, Year, Duration, Synopsis, Language, Budget
-    patch.ApplyTo(dto, ModelState);
+    var dto = await services.MovieService.GetPatchModelAsync(id);   // current snapshot
+    patch.ApplyTo(dto, ModelState);                                  // ModelState overload → records op errors
     if (!TryValidateModel(dto)) return ValidationProblem(ModelState);
-    await services.MovieService.ApplyPatchAsync(id, dto);           // re-runs business rules, maps to Movie + Details
+    await services.MovieService.ApplyPatchAsync(id, dto);
     return NoContent();
 }
 ```
 
-**Verify:** `PATCH /api/movies/1` with `[{ "op":"replace","path":"/budget","value":500000 }]` updates only Budget on `MovieDetails`.
+**Verify (use `Content-Type: application/json-patch+json`):**
+
+| `PATCH /api/movies/{id}` body | Result |
+|---|---|
+| `1`: `[{"op":"replace","path":"/budget","value":500000}]` | **204** — only Budget changes (check `/api/movies/1/details`) |
+| `1`: `[{"op":"replace","path":"/budget","value":-5}]` | **400** — "Budget may not be negative." |
+| `5`: `[{"op":"replace","path":"/budget","value":1000001}]` | **400** — Documentary cap (movie 5 = March of the Penguins) |
+| `5`: `[{"op":"replace","path":"/budget","value":1000000}]` | **204** — at the cap, allowed; also **creates** the missing Details row |
+| `2`: `[{"op":"replace","path":"/synopsis","value":"…"}]` | **204** — Shawshank had no Details; the row is created |
+| `1`: `[{"op":"replace","path":"/title","value":"Her"}]` | **400** — title rule applies on PATCH too |
+
 **Commit:** `feat(presentation): PATCH movie and details via flat JsonPatchDocument`
 
 ### Step 27: Add the test project and mock the data layer
