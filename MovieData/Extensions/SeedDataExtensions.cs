@@ -62,9 +62,14 @@ public static class SeedDataExtensions
                 Actors = { robbins, freeman },
                 Reviews =
                 {
-                    new Review { ReviewerName = "Cara", Comment = "Masterpiece.", Rating = 5 },
-                    new Review { ReviewerName = "Dan", Comment = "Hopeful.", Rating = 5 },
-                    new Review { ReviewerName = "Eve", Comment = "Slow start.", Rating = 3 }
+                    new Review { ReviewerName = "Cara",   Comment = "Masterpiece.",   Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-8) },
+                    new Review { ReviewerName = "Dan",    Comment = "Hopeful.",       Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-7) },
+                    new Review { ReviewerName = "Eve",    Comment = "Slow start.",    Rating = 3, CreatedAt = DateTime.UtcNow.AddDays(-6) },
+                    new Review { ReviewerName = "Greta",  Comment = "Unforgettable.", Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-5) },
+                    new Review { ReviewerName = "Hans",   Comment = "A classic.",     Rating = 4, CreatedAt = DateTime.UtcNow.AddDays(-4) },
+                    new Review { ReviewerName = "Ingrid", Comment = "Powerful.",      Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-3) },
+                    new Review { ReviewerName = "Jonas",  Comment = "Moving.",        Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-2) },
+                    new Review { ReviewerName = "Karin",  Comment = "Brilliant.",     Rating = 4, CreatedAt = DateTime.UtcNow.AddDays(-1) }
                 }
             },
             new()

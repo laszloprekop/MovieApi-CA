@@ -266,7 +266,7 @@ Content-Type: application/json
 
 ###
 
-### Step 24 — 5-cap on Forrest Gump (id 1, 1994, seeded 2): run 4× — first 3 = 201 (reach 5), 4th = 6th → 400
+### 5-cap on Forrest Gump (id 1, 1994, seeded 2): run 4× — first 3 = 201 (reach 5), 4th = 6th → 400
 POST {{MovieApi_HostAddress}}/api/movies/1/reviews
 Content-Type: application/json
 
@@ -278,17 +278,17 @@ Content-Type: application/json
 
 ###
 
-### Step 25 — Documentary actor cap: add an 11th actor to March of the Penguins (movie 5, has 10) — expect 400
+### Documentary actor cap: add an 11th actor to March of the Penguins (movie 5, has 10) — expect 400
 POST {{MovieApi_HostAddress}}/api/movies/5/actors/4
 
 ###
 
-### Step 25 — same add on a non-Documentary (Forrest Gump, movie 1) — expect 204 (cap doesn't apply)
+### same add on a non-Documentary (Forrest Gump, movie 1) — expect 204 (cap doesn't apply)
 POST {{MovieApi_HostAddress}}/api/movies/1/actors/4
 
 ###
 
-### Step 26 — PATCH budget on Forrest Gump (movie 1, has Details) — expect 204, only Budget changes
+### PATCH budget on Forrest Gump (movie 1, has Details) — expect 204, only Budget changes
 PATCH {{MovieApi_HostAddress}}/api/movies/1
 Content-Type: application/json-patch+json
 
@@ -302,13 +302,13 @@ Content-Type: application/json-patch+json
 
 ###
 
-### Step 26 — confirm only Budget changed
+### confirm only Budget changed
 GET {{MovieApi_HostAddress}}/api/movies/1/details
 Accept: application/json
 
 ###
 
-### Step 26 — negative budget — expect 400 "Budget may not be negative."
+### negative budget — expect 400 "Budget may not be negative."
 PATCH {{MovieApi_HostAddress}}/api/movies/1
 Content-Type: application/json-patch+json
 
@@ -322,7 +322,7 @@ Content-Type: application/json-patch+json
 
 ###
 
-### Step 26 — Documentary budget cap: March of the Penguins (movie 5) over 1,000,000 — expect 400
+### Documentary budget cap: March of the Penguins (movie 5) over 1,000,000 — expect 400
 PATCH {{MovieApi_HostAddress}}/api/movies/5
 Content-Type: application/json-patch+json
 
@@ -336,7 +336,7 @@ Content-Type: application/json-patch+json
 
 ###
 
-### Step 26 — Documentary at the cap (1,000,000) — expect 204 (also creates the missing Details row)
+### Documentary at the cap (1,000,000) — expect 204 (also creates the missing Details row)
 PATCH {{MovieApi_HostAddress}}/api/movies/5
 Content-Type: application/json-patch+json
 
@@ -350,7 +350,7 @@ Content-Type: application/json-patch+json
 
 ###
 
-### Step 26 — patch a movie with no Details yet (Shawshank, movie 2) — expect 204, Details created
+### patch a movie with no Details yet (Shawshank, movie 2) — expect 204, Details created
 PATCH {{MovieApi_HostAddress}}/api/movies/2
 Content-Type: application/json-patch+json
 
@@ -369,7 +369,7 @@ Content-Type: application/json-patch+json
 
 ###
 
-### Step 26 — patch title to a duplicate ("Her", movie 6) — expect 400 (title rule applies on PATCH too)
+### patch title to a duplicate ("Her", movie 6) — expect 400 (title rule applies on PATCH too)
 PATCH {{MovieApi_HostAddress}}/api/movies/1
 Content-Type: application/json-patch+json
 
@@ -380,5 +380,12 @@ Content-Type: application/json-patch+json
     "value": "Her"
   }
 ]
+
+###
+
+### Shawshank (movie 2, 1994) seeded with 8 staggered reviews — each shows a distinct createdAt
+### (this is the review-trimmer's target in Step 30; oldest = Cara ~8 days ago, newest = Karin ~1 day ago)
+GET {{MovieApi_HostAddress}}/api/movies/2/reviews
+Accept: application/json
 
 ###

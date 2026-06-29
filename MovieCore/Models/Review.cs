@@ -14,5 +14,6 @@ namespace MovieCore.Models
         // FK to Movie, and navigation property back to Movie
         public int MovieId { get; set; }
         public Movie Movie { get; set; } = null!;
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }

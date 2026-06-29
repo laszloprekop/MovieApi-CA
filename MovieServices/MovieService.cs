@@ -62,7 +62,7 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
             Budget = movie.Details?.Budget ?? 0,
             Reviews = movie.Reviews.Select(r => new ReviewDto
             {
-                Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating
+                Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating, CreatedAt = r.CreatedAt
             }).ToList(),
             Actors = movie.Actors.Select(a => new ActorDto
             {

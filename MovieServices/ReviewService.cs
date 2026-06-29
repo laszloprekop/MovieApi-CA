@@ -19,7 +19,8 @@ public class ReviewService(IUnitOfWork uow) : IReviewService
             Id = r.Id,
             ReviewerName = r.ReviewerName,
             Comment = r.Comment,
-            Rating = r.Rating
+            Rating = r.Rating,
+            CreatedAt = r.CreatedAt,
         }).ToList();
     }
 
