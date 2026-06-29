@@ -384,8 +384,15 @@ Content-Type: application/json-patch+json
 ###
 
 ### Shawshank (movie 2, 1994) seeded with 8 staggered reviews — each shows a distinct createdAt
-### (this is the review-trimmer's target in Step 30; oldest = Cara ~8 days ago, newest = Karin ~1 day ago)
+### Before Step 30 exists: 8 reviews (oldest = Cara ~8 days ago, newest = Karin ~1 day ago).
+### After Step 30 (trimmer running): 5 reviews — the newest (Greta, Hans, Ingrid, Jonas, Karin); Cara/Dan/Eve trimmed.
 GET {{MovieApi_HostAddress}}/api/movies/2/reviews
+Accept: application/json
+
+###
+
+### Her (movie 6, 2013) is recent, so the trimmer leaves it alone even with 9 reviews
+GET {{MovieApi_HostAddress}}/api/movies/6/reviews
 Accept: application/json
 
 ###

@@ -14,4 +14,5 @@ public interface IMovieRepository
     void Remove(Movie movie);
     Task<bool> TitleExistsAsync(string title, int? excludeId = null);
     Task<Movie?> GetWithReviewsAsync(int id);
+    Task<IEnumerable<Movie>> GetAllWithReviewsAsync();
 }

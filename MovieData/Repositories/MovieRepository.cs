@@ -35,4 +35,7 @@ public class MovieRepository(MovieContext context) : IMovieRepository
 
     public Task<Movie?> GetWithReviewsAsync(int id) =>
         context.Movies.Include(m => m.Reviews).FirstOrDefaultAsync(m => m.Id == id);
+
+    public async Task<IEnumerable<Movie>> GetAllWithReviewsAsync() =>
+        await context.Movies.Include(m => m.Reviews).ToListAsync();
 }

@@ -2836,30 +2836,112 @@ CreatedAt = r.CreatedAt,
 
 ### Step 30: Add the idempotent review-trimmer background service
 
-> **New concept: `BackgroundService` + `IServiceScopeFactory`.** A hosted worker runs on a loop independent of HTTP. It's a **singleton**, so it can't hold a scoped `IUnitOfWork` — it must create a scope per run (ADR 0004). Builds on Steps 24 & 29.
+> **New concept: `BackgroundService` + `IServiceScopeFactory`.** A hosted worker runs on a loop,
+> independent of HTTP. It's registered as a **singleton**, so it **can't** hold a scoped `IUnitOfWork` —
+> it must open a **scope per run** and resolve the unit of work inside it (ADR 0004). Builds on Steps 24 & 29.
+
+**30.1 — Add a query that loads every movie with its reviews.**
+The trimmer reads each movie's `Reviews` and `Year`. `GetAllAsync` includes Genres + Actors but **not**
+Reviews, so `movie.Reviews` would be empty and nothing would trim. Add a dedicated query:
+
+```csharp
+// MovieCore/DomainContracts/IMovieRepository.cs  (add)
+Task<IEnumerable<Movie>> GetAllWithReviewsAsync();
+```
+
+```csharp
+// MovieData/Repositories/MovieRepository.cs  (add)
+public async Task<IEnumerable<Movie>> GetAllWithReviewsAsync() =>
+    await context.Movies.Include(m => m.Reviews).ToListAsync();
+```
+
+**30.2 — The worker itself.**
+Note the constructor takes `IServiceScopeFactory`, **not** `IUnitOfWork` — that's the whole point. The
+per-tick body is wrapped in `try/catch` so a transient failure logs and retries instead of killing the
+worker, and the trim is idempotent: a movie already at ≤5 reviews is skipped.
 
 ```csharp
 // MovieApi/BackgroundServices/ReviewTrimmer.cs
-public class ReviewTrimmer(IUnitOfWork uow) : BackgroundService   // ← mistake: a singleton can't capture a scoped IUnitOfWork — inject IServiceScopeFactory and create a scope inside the loop
+using MovieCore.DomainContracts;   // IUnitOfWork — the rest comes from the web SDK's implicit usings
+
+namespace MovieApi.BackgroundServices;
+
+public class ReviewTrimmer(IServiceScopeFactory scopeFactory, ILogger<ReviewTrimmer> logger) : BackgroundService
 {
+    private const int KeepNewest = 5;
+    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            // scan ALL movies >20yr with >5 reviews; remove oldest (by CreatedAt) down to 5
-            await TrimAsync(stoppingToken);
-            await Task.Delay(TimeSpan.FromMinutes(10), stoppingToken);
+            try
+            {
+                await TrimAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Review-trim pass failed");   // don't let one bad pass kill the worker
+            }
+
+            await Task.Delay(Interval, stoppingToken);
         }
+    }
+
+    private async Task TrimAsync()
+    {
+        // a singleton can't capture a scoped IUnitOfWork → open a scope per run and resolve inside it
+        using var scope = scopeFactory.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var cutoffYear = DateTime.UtcNow.Year - 20;   // "older than 20 years" — same definition as Step 24
+        var movies = await uow.Movies.GetAllWithReviewsAsync();
+
+        foreach (var movie in movies)
+        {
+            if (movie.Year >= cutoffYear || movie.Reviews.Count <= KeepNewest)
+                continue;   // recent, or already within the cap → nothing to do (this is the idempotency)
+
+            var toRemove = movie.Reviews
+                .OrderByDescending(r => r.CreatedAt)   // newest first
+                .Skip(KeepNewest)                      // keep the 5 newest, remove everything older
+                .ToList();
+
+            foreach (var review in toRemove)
+                uow.Reviews.Remove(review);
+
+            logger.LogInformation("Trimmed {Count} old review(s) from movie {MovieId}", toRemove.Count, movie.Id);
+        }
+
+        await uow.CompleteAsync();
     }
 }
 ```
 
 ```csharp
 // MovieApi/Program.cs
+using MovieApi.BackgroundServices;   // for ReviewTrimmer
+// ...
 builder.Services.AddHostedService<ReviewTrimmer>();
 ```
 
-**Verify:** seed a >20-year movie with 8 reviews; within one tick it's trimmed to the 5 newest.
+> **It runs at startup.** `AddHostedService` starts `ExecuteAsync` as the app boots, and the loop calls
+> `TrimAsync` immediately (no initial delay). So a freshly re-seeded Shawshank is trimmed within moments
+> of `dotnet run`.
+
+**Verify:**
+
+| Check | Result |
+|---|---|
+| Re-seed, `dotnet run`, watch the console | log line: `Trimmed 3 old review(s) from movie 2` |
+| `GET /api/movies/2/reviews` (Shawshank) shortly after startup | **5** reviews — the newest (Greta, Hans, Ingrid, Jonas, Karin); Cara/Dan/Eve gone |
+| Restart and let it tick again (idempotency) | movie 2 now has 5 → skipped, **nothing** removed, no log line for it |
+| `GET /api/movies/6/reviews` (Her, 2013) | untouched — Her is recent, so the trimmer ignores it even with 9 reviews |
+
+> **Reconciles with Step 29.** Shawshank's **8** is the seed/pre-trim state (what Step 29 verifies before
+> this worker exists); **5** is the steady state once the trimmer is running. If you want to see the 8
+> first, query before the worker's first pass, or check it on the build at Step 29.
+
 **Commit:** `feat(api): add idempotent review-trimmer background service`
 
 ### Step 31: (Optional) Demonstrate the Result<T> alternative on one controller
