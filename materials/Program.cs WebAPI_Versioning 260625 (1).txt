@@ -1,0 +1,57 @@
+namespace WebAPI_Versioning
+{
+    public class Program
+    {
+        public static void Main(string[] args)
+        {
+            var builder = WebApplication.CreateBuilder(args);
+
+            builder.Services.AddControllers();
+
+            builder.Services.AddApiVersioning(options =>
+            {
+                options.DefaultApiVersion = new ApiVersion(1, 0);	// anger att standardversionen är v1.0.
+                options.AssumeDefaultVersionWhenUnspecified = true;	// gör att anrop utan angiven version använder standardversionen.
+
+                options.ReportApiVersions = true;			// gör att API: t skickar versionsinformation i responsheaders.
+            })
+            .AddApiExplorer(options => 				// Med AddApiExplorer(...) kan Swagger hitta och gruppera varje version korrekt.
+            {
+                options.GroupNameFormat = "'v'VVV";		// hur versionsgruppen ska heta.
+                options.SubstituteApiVersionInUrl = true;	// ersätt version-placeholdern i URL:en med riktig version.
+            });							// Tillsammans gör de att Swagger kan visa v1 och v2 snyggt och separat.
+
+            builder.Services.AddSwaggerGen(options =>		// Om du vill visa flera API-versioner i Swagger 
+								// behöver varje version få ett eget dokument, till exempel v1 och v2. 
+            {
+                options.SwaggerDoc("v1", new OpenApiInfo
+                {
+                    Title = "Products API",
+                    Version = "v1"
+                });
+
+                options.SwaggerDoc("v2", new OpenApiInfo
+                {
+                    Title = "Products API",
+                    Version = "v2"
+                });
+            });
+
+            var app = builder.Build();
+
+            app.UseSwagger();
+
+            app.UseSwaggerUI(options =>
+            {
+                options.SwaggerEndpoint("/swagger/v1/swagger.json", "Products API v1");
+                options.SwaggerEndpoint("/swagger/v2/swagger.json", "Products API v2");
+            });
+
+            app.UseHttpsRedirection();
+            app.UseAuthorization();
+            app.MapControllers();
+
+            app.Run();
+        }
+    }
+}

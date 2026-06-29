@@ -2752,7 +2752,11 @@ public class MovieServiceTests
 
 ## Phase 2 — Stretch Goals
 
-> Optional/bonus work beyond the brief's mandatory requirements — the review trimmer (Del 6.4 extra) and Del 11 experimentation.
+> Optional/bonus work beyond the brief's mandatory requirements — the review trimmer (Del 6.4 extra) and
+> Del 11 experimentation. **Steps 32–37 (set B)** add the three cross-cutting features from the later
+> lectures (0625–0629): **logging**, **API versioning**, and **API documentation**. They are independent
+> of the brief and of each other; build them in order (logging → versioning → documentation), because the
+> multi-version Swagger docs in Step 36 read the version descriptions that Step 33 sets up.
 
 ### Step 29: Add CreatedAt to Review
 
@@ -3227,4 +3231,430 @@ public class ActorServiceTests
 | `dotnet test` | green — the Actor test now asserts on the `Result`, not a thrown exception |
 
 **Commit:** `feat(presentation): demonstrate Result<T> error style on the Actor slice`
+
+---
+
+> **Set B — cross-cutting features (lectures 0625–0629).** The steps below are *not* in the Övning 6 brief;
+> they come from the API-versioning (0625), documentation (0626), and logging (0629) lectures and from the
+> class repo <https://github.com/Lexicon-LTU-VT-2026/WebAPI-Versioning>. Design decisions: **ADR 0005**
+> (URL-segment versioning, v2 reshapes Genre) and **ADR 0006** (Swashbuckle + Swagger UI + Scalar). Each
+> new concern is registered through a small **DI extension method** so `Program.cs` stays a thin
+> composition root.
+
+### Step 32: Add structured logging across the stack
+
+> **New concept: `ILogger<T>` + structured logging.** ASP.NET Core's built-in logger is injected by DI as
+> `ILogger<TheClass>` (the `T` becomes the log *category*). Always log with a **message template**
+> (`"Created movie {Id}"`, `id`) — not string interpolation — so providers can capture `Id` as a real
+> field. Builds on Step 14 (the exception handler) and Step 30 (the trimmer already logs this way).
+
+**32.1 — Let the service layer see `ILogger<T>`.** `MovieServices` is a plain class library with no
+ASP.NET framework reference, so `ILogger<T>` (in `Microsoft.Extensions.Logging.Abstractions`) isn't
+guaranteed to resolve. Add the package.
+
+```bash
+dotnet add MovieServices/MovieServices.csproj package Microsoft.Extensions.Logging.Abstractions --version 10.0.9
+```
+
+> If `ILogger<T>` already resolves in `MovieServices` (it can arrive transitively), this is a no-op —
+> but adding it makes the dependency explicit, the same way Step 13 made AutoMapper explicit.
+
+**32.2 — Inject the logger into `MovieService` and log the writes + rule rejections.** Add a logger
+parameter to the primary constructor, then log at the meaningful points — *not* on every read.
+
+```csharp
+// MovieServices/MovieService.cs
+using Microsoft.Extensions.Logging;   // ← add
+// ...
+public class MovieService(IUnitOfWork uow, IMapper mapper, ILogger<MovieService> logger) : IMovieService
+{
+    // ... in CreateAsync, after await uow.CompleteAsync():
+    logger.LogInformation($"Created movie {movie.Id} '{movie.Title}'");   // ← mistake: use a template ("Created movie {Id} {Title}", movie.Id, movie.Title) — interpolation loses the structured fields
+
+    // ... in CreateAsync, replace the genre-missing throw's lead-in:
+    logger.LogWarning("Rejected create for '{Title}': no genres supplied", dto.Title);
+}
+```
+
+**32.3 — Log unhandled (500-class) errors in the exception handler.** Domain exceptions are *expected*
+(404/400) — log them at most at `Debug`. Anything that falls through to the `_ =>` 500 branch is a real
+fault and deserves `LogError` with the exception.
+
+```csharp
+// MovieApi/ExceptionHandling/DomainExceptionHandler.cs
+public sealed class DomainExceptionHandler(ILogger<DomainExceptionHandler> logger) : IExceptionHandler
+{
+    // ... after computing `status`, before writing the ProblemDetails:
+    if (status == StatusCodes.Status500InternalServerError)
+        logger.LogError(exception, "Unhandled exception");
+}
+```
+
+**32.4 — Turn on HTTP request logging and set per-category levels.** `AddHttpLogging` + `UseHttpLogging`
+log each request/response through the built-in middleware. Wrap the registration in a tiny extension so
+`Program.cs` reads cleanly.
+
+```csharp
+// MovieApi/Extensions/LoggingExtensions.cs
+namespace MovieApi.Extensions;
+
+public static class LoggingExtensions
+{
+    public static IServiceCollection AddApplicationLogging(this IServiceCollection services) =>
+        services.AddHttpLogging(o => o.LoggingFields = HttpLoggingFields.RequestPropertiesAndHeaders);
+}
+```
+
+```csharp
+// MovieApi/Program.cs
+builder.Services.AddApplicationLogging();   // near the other registrations
+// ...
+app.UseHttpLogging();                        // early in the pipeline, after UseExceptionHandler()
+```
+
+```jsonc
+// MovieApi/appsettings.Development.json  — demote framework noise, spotlight your service
+"LogLevel": {
+  "Default": "Information",
+  "Microsoft.AspNetCore": "Warning",
+  "Microsoft.AspNetCore.HttpLogging.HttpLoggingMiddleware": "Information",
+  "MovieServices.MovieService": "Debug"
+}
+```
+
+**Verify:** `dotnet run`; `POST /api/movies` → console shows `Created movie 11 '…'`; an HTTP-logging line
+appears per request; `GET /api/movies` (no genres on a create) → a `warn` line. Force a 500 (e.g. stop SQL
+Server) → one `fail` line with a stack trace, but the client still gets a clean `ProblemDetails`.
+**Commit:** `feat(api): add ILogger structured logging and HTTP request logging`
+
+### Step 33: Install Asp.Versioning and add the versioning DI extension
+
+> **New concept: `Asp.Versioning`.** Two packages: `Asp.Versioning.Mvc` (versions controllers) and
+> `Asp.Versioning.Mvc.ApiExplorer` (so Swagger can discover and group each version). We choose **URL-segment**
+> versioning (`/api/v{version}/...`) — ADR 0005. This step is pure setup; routes change in Step 34.
+
+**33.1 — Add the packages to `MovieApi`** (the composition root wires versioning; the attributes used in
+`MoviePresentation` come transitively).
+
+```bash
+dotnet add MovieApi/MovieApi.csproj package Asp.Versioning.Mvc --version 10.0.0
+dotnet add MovieApi/MovieApi.csproj package Asp.Versioning.Mvc.ApiExplorer --version 10.0.0
+```
+
+> `MoviePresentation` needs the `[ApiVersion]` / `[MapToApiVersion]` attributes too. They live in
+> `Asp.Versioning.Abstractions`, which flows in transitively via `Asp.Versioning.Mvc` once `MovieApi`
+> references the controllers' assembly — if the attribute won't resolve there, add
+> `Asp.Versioning.Mvc` to `MoviePresentation` as well.
+
+**33.2 — The versioning extension.** `AddMvc()` between `AddApiVersioning()` and `AddApiExplorer()` is what
+binds versioning to controllers — omit it and the ApiExplorer grouping silently does nothing.
+
+```csharp
+// MovieApi/Extensions/ApiVersioningExtensions.cs
+using Asp.Versioning;
+
+namespace MovieApi.Extensions;
+
+public static class ApiVersioningExtensions
+{
+    public static IServiceCollection AddApiVersioningConfigured(this IServiceCollection services)
+    {
+        services.AddApiVersioning(options =>
+            {
+                options.DefaultApiVersion = new ApiVersion(1, 0);
+                options.AssumeDefaultVersionWhenUnspecified = true;   // v1 is the assumed default
+                options.ReportApiVersions = true;                     // api-supported-versions response header
+                options.ApiVersionReader = new UrlSegmentApiVersionReader();
+            })
+            .AddMvc()
+            .AddApiExplorer(options =>
+            {
+                options.GroupNameFormat = "'v'VVV";        // -> "v1", "v2"
+                options.SubstituteApiVersionInUrl = true;  // fill {version} in the documented paths
+            });
+
+        return services;
+    }
+}
+```
+
+```csharp
+// MovieApi/Program.cs
+using MovieApi.Extensions;
+// ...
+builder.Services.AddApiVersioningConfigured();
+```
+
+**Verify:** `dotnet build` green; `dotnet run` boots. No route changed yet — that's Step 34.
+**Commit:** `feat(api): configure URL-segment API versioning`
+
+### Step 34: Move every controller under /api/v1
+
+> The whole API becomes consistently versioned (ADR 0005). Each controller is declared `[ApiVersion("1.0")]`
+> and its route gains the `v{version:apiVersion}` segment. This **breaks** the old `/api/...` routes — that's
+> expected; `/api/v1/...` is the new shape and `v1` is the assumed default.
+
+**34.1 — Version `MoviesController`.** Add the attribute and the route segment; move the file into a `V1`
+folder + namespace so a `V2` sibling can exist in Step 35.
+
+```csharp
+// MoviePresentation/Controllers/V1/MoviesController.cs   (moved from Controllers/)
+using Asp.Versioning;
+// ...
+namespace MoviePresentation.Controllers.V1;   // ← was MoviePresentation.Controllers
+
+[ApiController]
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/movies")]   // ← was [Route("api/movies")]
+public class MoviesController(IServiceManager services) : ControllerBase
+```
+
+**34.2 — Version `ActorsController` and `ReviewsController`.** Both use `[Route("api")]` with the segment on
+each action, so only the class-level route + attribute change.
+
+```csharp
+// MoviePresentation/Controllers/V1/ActorsController.cs  (and ReviewsController.cs)
+using Asp.Versioning;
+// ...
+namespace MoviePresentation.Controllers.V1;
+
+[ApiController]
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}")]   // ← was [Route("api")]; action templates (e.g. "actors") unchanged
+public class ActorsController(IServiceManager services) : ControllerBase
+```
+
+> **Why `nameof(GetMovie)` in `CreatedAtAction` still works:** `SubstituteApiVersionInUrl` and the route's
+> `{version}` token resolve from the current request's version, so the generated `Location` points at
+> `/api/v1/movies/{id}`. No change needed in the action bodies.
+
+**Verify:** `dotnet run`; `GET /api/v1/movies`, `GET /api/v1/actors`, `GET /api/v1/movies/1/reviews` all
+work; the old `GET /api/movies` now **404**s; responses carry an `api-supported-versions: 1.0` header.
+**Commit:** `refactor(presentation): move all controllers under /api/v1`
+
+### Step 35: Add a v2 of the Movies list (the breaking change)
+
+> v1 keeps the legacy joined `Genre` string; **v2** exposes `Genres` as an array — the honest shape now that
+> genres are many-to-many (ADR 0002, 0005). This is the lecture's `firstName → givenName` break, contained to
+> a new endpoint so v1 clients are untouched. We version just the **list** endpoint to keep it focused.
+
+**35.1 — The v2 read DTO.**
+
+```csharp
+// MovieCore/DTOs/MovieDtoV2.cs
+namespace MovieCore.DTOs;
+
+public class MovieDtoV2
+{
+    public int Id { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public int Year { get; set; }
+    public List<string> Genres { get; set; } = [];   // ← v2: array, not a joined string
+    public int Duration { get; set; }
+}
+```
+
+**35.2 — Map it, and add a service method.** AutoMapper projects `Genres` from the navigation; the service
+gets a v2 list method on the existing contract.
+
+```csharp
+// MovieData/Mapping/MovieProfile.cs   (add inside the ctor)
+CreateMap<Movie, MovieDtoV2>()
+    .ForMember(d => d.Genres, o => o.MapFrom(s => s.Genres.Select(g => g.Name)));
+```
+
+```csharp
+// MovieContracts/IMovieService.cs   (add)
+Task<IEnumerable<MovieDtoV2>> GetAllV2Async(string? genre, int? year, string? actor);
+```
+
+```csharp
+// MovieServices/MovieService.cs   (add; reuses the existing ApplyFilters)
+public async Task<IEnumerable<MovieDtoV2>> GetAllV2Async(string? genre, int? year, string? actor) =>
+    mapper.Map<IEnumerable<MovieDtoV2>>(ApplyFilters(await uow.Movies.GetAllAsync(), genre, year, actor));
+```
+
+**35.3 — The v2 controller.** A separate class in a `V2` namespace (the class name `MoviesController` may
+repeat across namespaces). It declares only `2.0` and only the one reshaped action.
+
+```csharp
+// MoviePresentation/Controllers/V2/MoviesController.cs
+using Asp.Versioning;
+using Microsoft.AspNetCore.Mvc;
+using MovieContracts;
+using MovieCore.DTOs;
+
+namespace MoviePresentation.Controllers.V2;
+
+[ApiController]
+[ApiVersion("2.0")]
+[Route("api/v{version:apiVersion}/movies")]
+public class MoviesController(IServiceManager services) : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<MovieDtoV2>>> GetMovies(
+        [FromQuery] string? genre, [FromQuery] int? year, [FromQuery] string? actor) =>
+        Ok(await services.MovieService.GetAllV2Async(genre, year, actor));
+}
+```
+
+**Verify:** `dotnet run`; `GET /api/v1/movies` → items with `"genre": "Drama, Crime"`; `GET /api/v2/movies`
+→ the same movies with `"genres": ["Drama","Crime"]`; `GET /api/v3/movies` → 400 (unsupported version).
+**Commit:** `feat(presentation): add v2 movies list exposing genres as an array`
+
+### Step 36: Swap native OpenAPI for Swashbuckle + version-aware Swagger UI
+
+> **New concept: Swashbuckle with XML comments + one doc per version.** We replace .NET 10's native
+> `AddOpenApi`/`MapOpenApi` with `Swashbuckle.AspNetCore` (ADR 0006), feed it the projects' XML doc files,
+> and generate **one Swagger document per API version** from `IApiVersionDescriptionProvider` instead of
+> hardcoding `"v1"`/`"v2"`. Builds on Step 33.
+
+**36.1 — Replace the package and the calls.** Remove `Microsoft.AspNetCore.OpenApi`, add Swashbuckle.
+
+```bash
+dotnet remove MovieApi/MovieApi.csproj package Microsoft.AspNetCore.OpenApi
+dotnet add    MovieApi/MovieApi.csproj package Swashbuckle.AspNetCore --version 10.2.3
+```
+
+```csharp
+// MovieApi/Program.cs   (delete these two lines)
+builder.Services.AddOpenApi();   // ← remove
+app.MapOpenApi();                // ← remove (inside the IsDevelopment block)
+```
+
+**36.2 — Turn on XML doc generation where the documented types live** — controllers (`MoviePresentation`)
+and DTOs (`MovieCore`) — and silence the "missing comment" warning (lecture's CS1591 note).
+
+```xml
+<!-- MoviePresentation/MoviePresentation.csproj AND MovieCore/MovieCore.csproj -->
+<PropertyGroup>
+  <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  <NoWarn>$(NoWarn);1591</NoWarn>   <!-- don't fail on undocumented public members -->
+</PropertyGroup>
+```
+
+**36.3 — Generate a Swagger doc per version.** An `IConfigureOptions<SwaggerGenOptions>` reads the version
+descriptions and registers a `SwaggerDoc` for each — so a future `v3` needs *no* Program.cs change.
+
+```csharp
+// MovieApi/Extensions/SwaggerOptionsConfigurator.cs
+using Asp.Versioning.ApiExplorer;
+using Microsoft.Extensions.Options;
+using Microsoft.OpenApi.Models;
+using Swashbuckle.AspNetCore.SwaggerGen;
+
+namespace MovieApi.Extensions;
+
+public class SwaggerOptionsConfigurator(IApiVersionDescriptionProvider provider)
+    : IConfigureOptions<SwaggerGenOptions>
+{
+    public void Configure(SwaggerGenOptions options)
+    {
+        foreach (var d in provider.ApiVersionDescriptions)
+            options.SwaggerDoc(d.GroupName, new OpenApiInfo
+            {
+                Title = "Movie API",
+                Version = d.ApiVersion.ToString(),
+                Description = d.IsDeprecated ? "This API version is deprecated." : null
+            });
+    }
+}
+```
+
+**36.4 — The documentation extension** (registers SwaggerGen + the XML files + the configurator).
+
+```csharp
+// MovieApi/Extensions/ApiDocumentationExtensions.cs
+using System.Reflection;
+using Microsoft.Extensions.Options;
+using Swashbuckle.AspNetCore.SwaggerGen;
+
+namespace MovieApi.Extensions;
+
+public static class ApiDocumentationExtensions
+{
+    public static IServiceCollection AddApiDocumentation(this IServiceCollection services)
+    {
+        services.AddTransient<IConfigureOptions<SwaggerGenOptions>, SwaggerOptionsConfigurator>();
+        services.AddSwaggerGen(options =>
+        {
+            foreach (var assembly in new[] { "MoviePresentation", "MovieCore" })
+            {
+                var xml = Path.Combine(AppContext.BaseDirectory, $"{assembly}.xml");
+                if (File.Exists(xml)) options.IncludeXmlComments(xml);
+            }
+        });
+        return services;
+    }
+}
+```
+
+```csharp
+// MovieApi/Program.cs
+builder.Services.AddApiDocumentation();   // replaces AddOpenApi()
+// ...
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();   // serves /swagger/v1/swagger.json, /swagger/v2/swagger.json
+    app.UseSwaggerUI(options =>
+    {
+        foreach (var d in app.DescribeApiVersions())
+            options.SwaggerEndpoint($"/swagger/{d.GroupName}/swagger.json", $"Movie API {d.GroupName}");
+    });
+}
+```
+
+**Verify:** `dotnet run`; `/swagger` shows a version dropdown with **v1** and **v2**; the v1 doc lists movies
+(with `genre`), actors and reviews; the v2 doc lists the movies list returning `genres[]`.
+**Commit:** `feat(api): document the API with Swashbuckle and per-version Swagger UI`
+
+### Step 37: Add Scalar UI and sample XML comments
+
+> **New concept: Scalar.** A modern API-reference UI that renders the same OpenAPI documents Swashbuckle
+> already serves — offered alongside classic Swagger UI (ADR 0006). We also add real `<summary>`/`<response>`
+> comments to one slice so both UIs show them.
+
+**37.1 — Add Scalar and point it at the Swagger documents.**
+
+```bash
+dotnet add MovieApi/MovieApi.csproj package Scalar.AspNetCore --version 2.16.6
+```
+
+```csharp
+// MovieApi/Program.cs   (inside the IsDevelopment block, after UseSwaggerUI)
+using Scalar.AspNetCore;
+// ...
+app.MapScalarApiReference(options =>
+{
+    options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
+    foreach (var d in app.DescribeApiVersions())
+        options.AddDocument(d.GroupName, d.GroupName);
+});
+```
+
+**37.2 — Document one slice so the comments actually surface.** XML comments on the action + a
+`ProducesResponseType` (so the UIs list the 404) — apply the same pattern to the rest over time.
+
+```csharp
+// MoviePresentation/Controllers/V1/MoviesController.cs   (on GetMovie)
+/// <summary>Get a single movie by its id.</summary>
+/// <param name="id">The movie's unique identifier.</param>
+/// <response code="200">The movie was found.</response>
+/// <response code="404">No movie exists with that id.</response>
+[ProducesResponseType(StatusCodes.Status200OK)]
+[ProducesResponseType(StatusCodes.Status404NotFound)]
+[HttpGet("{id:int}")]
+public async Task<ActionResult<MovieDto>> GetMovie(int id) =>
+```
+
+```csharp
+// MovieCore/DTOs/MovieDtoV2.cs   (a DTO comment shows in the schema section)
+/// <summary>Movie as exposed by API v2 — genres are a list, not a joined string.</summary>
+public class MovieDtoV2
+```
+
+**Verify:** `dotnet run`; `/scalar/v1` renders the reference UI; `GET /api/v1/movies/{id}` shows the summary,
+the `id` parameter description, and both 200/404 responses; the v2 schema shows the DTO summary. Swagger UI
+(Step 36) shows the same comments.
+**Commit:** `feat(api): add Scalar reference UI and XML doc comments`
 
