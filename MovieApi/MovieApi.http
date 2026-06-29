@@ -86,6 +86,13 @@ Accept: application/json
 
 ###
 
+### GET a non-existent actor → 404 ProblemDetails produced by the Result translation
+### (the Actor slice maps Result.NotFound itself; it does NOT go through IExceptionHandler)
+GET {{MovieApi_HostAddress}}/api/actors/9999
+Accept: application/json
+
+###
+
 ### POST create new actor
 POST {{MovieApi_HostAddress}}/api/actors
 Content-Type: application/json
@@ -393,6 +400,19 @@ Accept: application/json
 
 ### Her (movie 6, 2013) is recent, so the trimmer leaves it alone even with 9 reviews
 GET {{MovieApi_HostAddress}}/api/movies/6/reviews
+Accept: application/json
+
+###
+
+
+## Any Movies/Review error - expect 404 through IExceptionHandler
+GET {{MovieApi_HostAddress}}/api/movies/999
+Accept: application/json
+
+###
+
+## Any Movies/Review error - expect 404 through ToProblem - same shape as the Movies/Reviews, different mechanism behind
+GET {{MovieApi_HostAddress}}/api/actors/999
 Accept: application/json
 
 ###

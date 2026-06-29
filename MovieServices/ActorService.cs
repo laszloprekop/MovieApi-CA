@@ -1,37 +1,34 @@
 ﻿using MovieContracts;
+using MovieCore;
 using MovieCore.DomainContracts;
 using MovieCore.DTOs;
-using MovieCore.Exceptions;
 using MovieCore.Models;
 
 namespace MovieServices;
 
 public class ActorService(IUnitOfWork uow) : IActorService
 {
-    public async Task<IEnumerable<ActorDto>> GetAllAsync()
+    public async Task<Result<IEnumerable<ActorDto>>> GetAllAsync()
     {
         var actors = await uow.Actors.GetAllAsync();
-        return actors.Select(a => new ActorDto
+        var dtos = actors.Select(a => new ActorDto
         {
             Id = a.Id,
             Name = a.Name,
             BirthYear = a.BirthYear
         }).ToList();
+        return Result.Success<IEnumerable<ActorDto>>(dtos);
     }
 
-    public async Task<ActorDto> GetAsync(int id)
+    public async Task<Result<ActorDto>> GetAsync(int id)
     {
-        var actor = await uow.Actors.GetAsync(id)
-                    ?? throw new NotFoundException($"Actor {id} not found");
-        return new ActorDto
-        {
-            Id = actor.Id,
-            Name = actor.Name,
-            BirthYear = actor.BirthYear
-        };
+        var actor = await uow.Actors.GetAsync(id);
+        if (actor is null) return Result.NotFound<ActorDto>($"Actor {id} not found");
+        return Result.Success(
+            new ActorDto { Id = actor.Id, Name = actor.Name, BirthYear = actor.BirthYear });
     }
 
-    public async Task<ActorDto> CreateAsync(ActorDto dto)
+    public async Task<Result<ActorDto>> CreateAsync(ActorDto dto)
     {
         var actor = new Actor
         {
@@ -41,32 +38,34 @@ public class ActorService(IUnitOfWork uow) : IActorService
         uow.Actors.Add(actor);
         await uow.CompleteAsync();
         dto.Id = actor.Id;
-        return dto;
+        return Result.Success(dto);
     }
 
-    public async Task UpdateAsync(int id, ActorDto dto)
+    public async Task<Result> UpdateAsync(int id, ActorDto dto)
     {
-        var actor =  await uow.Actors.GetAsync(id)
-                    ?? throw new NotFoundException($"Actor {id} not found");
+        var actor = await uow.Actors.GetAsync(id);
+        if (actor is null) return Result.NotFound($"Actor {id} not found");
         actor.Name = dto.Name;
         actor.BirthYear = dto.BirthYear;
         await uow.CompleteAsync();
+        return Result.Success();
     }
 
-    public async Task AddToMovieAsync(int movieId, int actorId)
+    public async Task<Result> AddToMovieAsync(int movieId, int actorId)
     {
-        var movie = await uow.Movies.GetWithActorsAsync(movieId)
-                    ?? throw new NotFoundException($"Movie {movieId} not found");
-        var actor = await uow.Actors.GetAsync(actorId)
-                    ?? throw new NotFoundException($"Actor {actorId} not found");
+        var movie = await uow.Movies.GetWithActorsAsync(movieId);
+        if (movie is null) return Result.NotFound($"Movie {movieId} not found");
+        var actor = await uow.Actors.GetAsync(actorId);
+        if (actor is null) return Result.NotFound($"Actor {actorId} not found");
 
         if (movie.Actors.Any(a => a.Id == actorId))
-            throw new BusinessRuleException($"Actor {actorId} is already in movie {movieId}.");
-        
+            return Result.BusinessRule($"Actor {actorId} is already in movie {movieId}.");
+
         if (MovieRules.IsDocumentary(movie) && movie.Actors.Count >= 10)
-            throw new BusinessRuleException("A documentary can only have 10 actors.");
-        
+            return Result.BusinessRule("A documentary can only have 10 actors.");
+
         movie.Actors.Add(actor);
         await uow.CompleteAsync();
+        return Result.Success();
     }
 }

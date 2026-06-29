@@ -1,12 +1,13 @@
-﻿using MovieCore.DTOs;
+﻿using MovieCore;
+using MovieCore.DTOs;
 
 namespace MovieContracts;
 
 public interface IActorService
 {
-    Task<IEnumerable<ActorDto>> GetAllAsync();
-    Task<ActorDto> GetAsync(int id);
-    Task<ActorDto> CreateAsync(ActorDto dto);
-    Task UpdateAsync(int id, ActorDto dto);
-    Task AddToMovieAsync(int movieId, int actorId);
+    Task<Result<IEnumerable<ActorDto>>> GetAllAsync();
+    Task<Result<ActorDto>> GetAsync(int id);
+    Task<Result<ActorDto>> CreateAsync(ActorDto dto);
+    Task<Result> UpdateAsync(int id, ActorDto dto);
+    Task<Result> AddToMovieAsync(int movieId, int actorId);
 }

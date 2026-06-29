@@ -2946,9 +2946,285 @@ builder.Services.AddHostedService<ReviewTrimmer>();
 
 ### Step 31: (Optional) Demonstrate the Result<T> alternative on one controller
 
-Del 9 invites showing both error styles. Keep exceptions+`IExceptionHandler` as the house default (ADR 0003); implement one controller (e.g. `ActorsController`) returning a `Result<T>` translated to `ProblemDetails`, purely to demonstrate you understand the trade-off.
+> Del 9 invites showing **both** error styles. The house default stays exceptions + `IExceptionHandler`
+> (ADR 0003); here we convert **one slice — the Actor slice — end to end** to the `Result<T>` style so the
+> trade-off is visible side by side: the Actor service returns success/failure **in-band** (no throwing),
+> and `ActorsController` translates a failed `Result` into `ProblemDetails` itself, while Movies and Reviews
+> still throw and flow through the central handler. Builds on Steps 14, 19, 25, 28.
 
-**Verify:** that controller returns correct status codes via `Result`; the rest still flow through the handler.
-**Commit:** `feat(presentation): demonstrate Result<T> error style on one controller`
+> **Why a whole slice, not one method.** The controller can only translate a `Result` if the service
+> *returns* one instead of throwing. So this isn't a controller-only change: the `IActorService` contract,
+> `ActorService`, the controller, **and the Actor unit test** all move together. That's the point — it
+> shows the style is a layering decision, not a controller trick.
+
+**31.1 — Add the `Result` type in MovieCore.**
+It must live in **MovieCore** (referenced by both MovieServices and, transitively, MoviePresentation) so the
+service can return it and the controller can read it. Non-generic `Result` for void operations; `Result<T>`
+carries a value on success.
+
+```csharp
+// MovieCore/Result.cs
+namespace MovieCore;
+
+public enum ErrorType { None, NotFound, BusinessRule }
+
+public class Result
+{
+    public bool IsSuccess { get; }
+    public string? Error { get; }
+    public ErrorType ErrorType { get; }
+
+    protected Result(bool isSuccess, ErrorType errorType, string? error)
+    {
+        IsSuccess = isSuccess;
+        ErrorType = errorType;
+        Error = error;
+    }
+
+    public static Result Success() => new(true, ErrorType.None, null);
+    public static Result NotFound(string error) => new(false, ErrorType.NotFound, error);
+    public static Result BusinessRule(string error) => new(false, ErrorType.BusinessRule, error);
+
+    // value-carrying siblings (T inferred from the argument on Success)
+    public static Result<T> Success<T>(T value) => new(value, true, ErrorType.None, null);
+    public static Result<T> NotFound<T>(string error) => new(default!, false, ErrorType.NotFound, error);
+    public static Result<T> BusinessRule<T>(string error) => new(default!, false, ErrorType.BusinessRule, error);
+}
+
+public sealed class Result<T> : Result
+{
+    public T Value { get; }
+
+    internal Result(T value, bool isSuccess, ErrorType errorType, string? error)
+        : base(isSuccess, errorType, error) => Value = value;
+}
 ```
+
+> The `Result<T>` constructor is `internal`, but the static factories that call it live on `Result` in the
+> **same assembly (MovieCore)**, so they construct it fine; callers in MovieServices use only the factories.
+> `Result.NotFound<ActorDto>("…")` needs the explicit type argument (there's no value to infer `T` from);
+> `Result.Success(dto)` infers it.
+
+**31.2 — Convert the Actor contract and service to return `Result` (stop throwing).**
+
+```csharp
+// MovieContracts/IActorService.cs
+using MovieCore;
+using MovieCore.DTOs;
+
+namespace MovieContracts;
+
+public interface IActorService
+{
+    Task<Result<IEnumerable<ActorDto>>> GetAllAsync();
+    Task<Result<ActorDto>> GetAsync(int id);
+    Task<Result<ActorDto>> CreateAsync(ActorDto dto);
+    Task<Result> UpdateAsync(int id, ActorDto dto);
+    Task<Result> AddToMovieAsync(int movieId, int actorId);
+}
+```
+
+```csharp
+// MovieServices/ActorService.cs
+using MovieContracts;
+using MovieCore;                 // Result, ErrorType
+using MovieCore.DomainContracts;
+using MovieCore.DTOs;
+using MovieCore.Models;
+// NOTE: remove `using MovieCore.Exceptions;` — this service no longer throws.
+
+namespace MovieServices;
+
+public class ActorService(IUnitOfWork uow) : IActorService
+{
+    public async Task<Result<IEnumerable<ActorDto>>> GetAllAsync()
+    {
+        var actors = await uow.Actors.GetAllAsync();
+        var dtos = actors.Select(a => new ActorDto { Id = a.Id, Name = a.Name, BirthYear = a.BirthYear })
+                         .ToList();
+        return Result.Success<IEnumerable<ActorDto>>(dtos);
+    }
+
+    public async Task<Result<ActorDto>> GetAsync(int id)
+    {
+        var actor = await uow.Actors.GetAsync(id);
+        if (actor is null) return Result.NotFound<ActorDto>($"Actor {id} not found");
+
+        return Result.Success(new ActorDto { Id = actor.Id, Name = actor.Name, BirthYear = actor.BirthYear });
+    }
+
+    public async Task<Result<ActorDto>> CreateAsync(ActorDto dto)
+    {
+        var actor = new Actor { Name = dto.Name, BirthYear = dto.BirthYear };
+        uow.Actors.Add(actor);
+        await uow.CompleteAsync();
+        dto.Id = actor.Id;
+        return Result.Success(dto);
+    }
+
+    public async Task<Result> UpdateAsync(int id, ActorDto dto)
+    {
+        var actor = await uow.Actors.GetAsync(id);
+        if (actor is null) return Result.NotFound($"Actor {id} not found");
+
+        actor.Name = dto.Name;
+        actor.BirthYear = dto.BirthYear;
+        await uow.CompleteAsync();
+        return Result.Success();
+    }
+
+    public async Task<Result> AddToMovieAsync(int movieId, int actorId)
+    {
+        var movie = await uow.Movies.GetWithActorsAsync(movieId);
+        if (movie is null) return Result.NotFound($"Movie {movieId} not found");
+
+        var actor = await uow.Actors.GetAsync(actorId);
+        if (actor is null) return Result.NotFound($"Actor {actorId} not found");
+
+        if (movie.Actors.Any(a => a.Id == actorId))
+            return Result.BusinessRule($"Actor {actorId} is already in movie {movieId}.");
+
+        if (MovieRules.IsDocumentary(movie) && movie.Actors.Count >= 10)
+            return Result.BusinessRule("A documentary can only have 10 actors.");
+
+        movie.Actors.Add(actor);
+        await uow.CompleteAsync();
+        return Result.Success();
+    }
+}
+```
+
+**31.3 — Translate `Result` to `ProblemDetails` in `ActorsController`.**
+Use **guard-style returns**, not a ternary: `return ok ? NoContent() : ToProblem(result);` does **not** compile
+(CS0173 — no implicit conversion between `NoContentResult` and `ObjectResult`). The `ToProblem` helper reuses
+`ControllerBase.Problem(...)`, which returns the same `ProblemDetails` body the central handler produces — so
+clients can't tell the two error styles apart.
+
+```csharp
+// MoviePresentation/Controllers/ActorsController.cs
+using Microsoft.AspNetCore.Mvc;
+using MovieContracts;
+using MovieCore;            // Result, ErrorType
+using MovieCore.DTOs;
+
+namespace MoviePresentation.Controllers;
+
+[ApiController]
+[Route("api")]
+public class ActorsController(IServiceManager services) : ControllerBase
+{
+    [HttpGet("actors")]
+    public async Task<ActionResult<IEnumerable<ActorDto>>> GetActors()
+    {
+        var result = await services.ActorService.GetAllAsync();
+        if (!result.IsSuccess) return ToProblem(result);
+        return Ok(result.Value);
+    }
+
+    [HttpGet("actors/{id:int}")]
+    public async Task<ActionResult<ActorDto>> GetActor(int id)
+    {
+        var result = await services.ActorService.GetAsync(id);
+        if (!result.IsSuccess) return ToProblem(result);
+        return Ok(result.Value);
+    }
+
+    [HttpPost("actors")]
+    public async Task<ActionResult<ActorDto>> CreateActor(ActorDto dto)
+    {
+        var result = await services.ActorService.CreateAsync(dto);
+        if (!result.IsSuccess) return ToProblem(result);
+        return CreatedAtAction(nameof(GetActor), new { id = result.Value.Id }, result.Value);
+    }
+
+    [HttpPut("actors/{id:int}")]
+    public async Task<IActionResult> UpdateActor(int id, ActorDto dto)
+    {
+        var result = await services.ActorService.UpdateAsync(id, dto);
+        if (!result.IsSuccess) return ToProblem(result);
+        return NoContent();
+    }
+
+    [HttpPost("movies/{movieId:int}/actors/{actorId:int}")]
+    public async Task<IActionResult> AddActorToMovie(int movieId, int actorId)
+    {
+        var result = await services.ActorService.AddToMovieAsync(movieId, actorId);
+        if (!result.IsSuccess) return ToProblem(result);
+        return NoContent();
+    }
+
+    private ObjectResult ToProblem(Result result) =>
+        Problem(detail: result.Error, statusCode: result.ErrorType switch
+        {
+            ErrorType.NotFound => StatusCodes.Status404NotFound,
+            ErrorType.BusinessRule => StatusCodes.Status400BadRequest,
+            _ => StatusCodes.Status500InternalServerError
+        });
+}
+```
+
+> `UpdateActor` changes its declared return type from `ActionResult` to `IActionResult` so the guard's
+> `return ToProblem(result);` (an `ObjectResult`) and `return NoContent();` share a return type cleanly.
+> The typed actions return `ActionResult<T>`; `ObjectResult`/`OkObjectResult`/`CreatedAtActionResult` all
+> convert to it implicitly, so the guard pattern compiles without casts.
+
+**31.4 — Update the Actor unit test (it asserted a throw).**
+Step 28's `AddToMovieAsync_DocumentaryAt10Actors_Throws` no longer compiles against a non-throwing service —
+assert on the **`Result`** instead, and confirm nothing was persisted:
+
+```csharp
+// MovieServices.Tests/ActorServiceTests.cs
+using MovieCore;               // Result, ErrorType
+using MovieCore.DomainContracts;
+using MovieCore.Models;
+using NSubstitute;
+// NOTE: remove `using MovieCore.Exceptions;`
+
+namespace MovieServices.Tests;
+
+public class ActorServiceTests
+{
+    [Fact]
+    public async Task AddToMovieAsync_DocumentaryAt10Actors_ReturnsBusinessRule()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.GetWithActorsAsync(5).Returns(TestData.MovieWithActors(10, documentary: true));
+        uow.Actors.GetAsync(99).Returns(new Actor { Id = 99, Name = "New" });
+        var sut = new ActorService(uow);
+
+        var result = await sut.AddToMovieAsync(5, 99);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ErrorType.BusinessRule, result.ErrorType);
+        await uow.DidNotReceive().CompleteAsync();   // rejected before saving
+    }
+
+    [Fact]
+    public async Task AddToMovieAsync_NonDocumentaryAt10Actors_Saves()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.GetWithActorsAsync(1).Returns(TestData.MovieWithActors(10, documentary: false));
+        uow.Actors.GetAsync(99).Returns(new Actor { Id = 99, Name = "New" });
+        var sut = new ActorService(uow);
+
+        var result = await sut.AddToMovieAsync(1, 99); // cap doesn't apply
+
+        Assert.True(result.IsSuccess);
+        await uow.Received(1).CompleteAsync();         // and it persisted
+    }
+}
+```
+
+**Verify:**
+
+| Check | Result |
+|---|---|
+| `GET /api/actors` / `GET /api/actors/1` | 200 + body (unchanged behaviour, now via `Result`) |
+| `GET /api/actors/9999` | **404 `ProblemDetails`** — produced by `ToProblem`, *not* the central handler |
+| `POST /api/movies/5/actors/4` (March of the Penguins, 10 actors) | **400** "A documentary can only have 10 actors." via `Result` |
+| `POST /api/movies/1/actors/1` twice | 1st **204**, 2nd **400** "already in movie" via `Result` |
+| Any Movies/Reviews error (e.g. `GET /api/movies/9999`) | still **404** through `IExceptionHandler` — the rest of the app is unchanged |
+| `dotnet test` | green — the Actor test now asserts on the `Result`, not a thrown exception |
+
+**Commit:** `feat(presentation): demonstrate Result<T> error style on the Actor slice`
 

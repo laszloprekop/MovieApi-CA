@@ -1,8 +1,8 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using MovieContracts;
-using MovieCore.DomainContracts;
+using MovieCore;
 using MovieCore.DTOs;
-using MovieCore.Models;
 
 namespace MoviePresentation.Controllers;
 
@@ -12,27 +12,37 @@ public class ActorsController(IServiceManager services) : ControllerBase
 {
     // GET: api/actors
     [HttpGet("actors")]
-    public async Task<ActionResult<IEnumerable<ActorDto>>> GetActors() =>
-        Ok(await services.ActorService.GetAllAsync());
+    public async Task<ActionResult<IEnumerable<ActorDto>>> GetActors()
+    {
+        var result = await services.ActorService.GetAllAsync();
+        if (!result.IsSuccess) return ToProblem(result);
+        return Ok(result.Value);
+    }
 
     // GET /api/actors/{id}
     [HttpGet("actors/{id:int}")]
-    public async Task<ActionResult<ActorDto>> GetActor(int id) =>
-        Ok(await services.ActorService.GetAsync(id));
+    public async Task<ActionResult<ActorDto>> GetActor(int id)
+    {
+        var result = await services.ActorService.GetAsync(id);
+        if (!result.IsSuccess) return ToProblem(result);
+        return Ok(result.Value);
+    }
 
     // Post /api/actors
     [HttpPost("actors")]
     public async Task<ActionResult<ActorDto>> CreateActor(ActorDto dto)
     {
-        var created = await services.ActorService.CreateAsync(dto);
-        return CreatedAtAction(nameof(GetActor), new { id = created.Id }, created);
+        var result = await services.ActorService.CreateAsync(dto);
+        if (!result.IsSuccess) return ToProblem(result);
+        return CreatedAtAction(nameof(GetActor), new { id = result.Value.Id }, result.Value);
     }
 
     // PUT /api/actors/{id}
     [HttpPut("actors/{id:int}")]
-    public async Task<ActionResult> UpdateActor(int id, ActorDto dto)
+    public async Task<IActionResult> UpdateActor(int id, ActorDto dto)
     {
-        await services.ActorService.UpdateAsync(id, dto);
+        var result = await services.ActorService.UpdateAsync(id, dto);
+        if (!result.IsSuccess) return ToProblem(result);
         return NoContent();
     }
 
@@ -40,7 +50,16 @@ public class ActorsController(IServiceManager services) : ControllerBase
     [HttpPost("movies/{movieId:int}/actors/{actorId:int}")]
     public async Task<IActionResult> AddActorToMovie(int movieId, int actorId)
     {
-        await services.ActorService.AddToMovieAsync(movieId, actorId);
+        var result = await services.ActorService.AddToMovieAsync(movieId, actorId);
+        if (!result.IsSuccess) return ToProblem(result);
         return NoContent();
     }
+
+    private ObjectResult ToProblem(Result result) =>
+        Problem(detail: result.Error, statusCode: result.ErrorType switch
+        {
+            ErrorType.NotFound => StatusCodes.Status404NotFound,
+            ErrorType.BusinessRule => StatusCodes.Status400BadRequest,
+            _ => StatusCodes.Status500InternalServerError
+        });
 }
