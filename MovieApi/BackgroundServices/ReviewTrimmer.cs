@@ -10,6 +10,7 @@ public class ReviewTrimmer(IServiceScopeFactory scopeFactory, ILogger<ReviewTrim
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
+        {
             try
             {
                 await TrimAsync();
@@ -19,9 +20,6 @@ public class ReviewTrimmer(IServiceScopeFactory scopeFactory, ILogger<ReviewTrim
                 logger.LogError(exception, "Error trimming reviews");
             }
 
-        ;
-
-        {
             await Task.Delay(Interval, stoppingToken);
         }
     }
@@ -48,8 +46,8 @@ public class ReviewTrimmer(IServiceScopeFactory scopeFactory, ILogger<ReviewTrim
             foreach (var review in toRemove)
                 uow.Reviews.Remove(review);
 
-            logger.LogInformation("Trimmed {Count} old review(s) for movie [{MovieId}] {Title}", toRemove.Count,
-                movie.Title, movie.Id);
+            logger.LogInformation("Trimmed {Count} old review(s) for movie [{MovieId}] {Title}"
+                , toRemove.Count, movie.Title, movie.Id);
         }
 
         await uow.CompleteAsync();

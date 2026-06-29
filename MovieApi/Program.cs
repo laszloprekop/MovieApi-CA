@@ -1,5 +1,6 @@
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using MovieApi.BackgroundServices;
 using MovieApi.ExceptionHandling;
 using MovieContracts;
 using MovieCore.DomainContracts;
@@ -29,6 +30,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddScoped<IServiceManager, ServiceManager>();
+builder.Services.AddHostedService<ReviewTrimmer>();
 
 var app = builder.Build();
 app.UseExceptionHandler();
