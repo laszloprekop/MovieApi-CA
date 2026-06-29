@@ -1940,11 +1940,17 @@ var movies = new List<Movie>
         Title = "The Shawshank Redemption", Year = 1994, Duration = 142,
         Genres = { drama },
         Actors = { robbins, freeman },
+        // 8 staggered reviews — old movie (1994) over the 5-cap → the review-trimmer's target (Steps 29/30)
         Reviews =
         {
-            new Review { ReviewerName = "Cara", Comment = "Masterpiece.", Rating = 5 },
-            new Review { ReviewerName = "Dan",  Comment = "Hopeful.",     Rating = 5 },
-            new Review { ReviewerName = "Eve",  Comment = "Slow start.",  Rating = 3 }
+            new Review { ReviewerName = "Cara",   Comment = "Masterpiece.",   Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-8) },
+            new Review { ReviewerName = "Dan",    Comment = "Hopeful.",       Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-7) },
+            new Review { ReviewerName = "Eve",    Comment = "Slow start.",    Rating = 3, CreatedAt = DateTime.UtcNow.AddDays(-6) },
+            new Review { ReviewerName = "Greta",  Comment = "Unforgettable.", Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-5) },
+            new Review { ReviewerName = "Hans",   Comment = "A classic.",     Rating = 4, CreatedAt = DateTime.UtcNow.AddDays(-4) },
+            new Review { ReviewerName = "Ingrid", Comment = "Powerful.",      Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-3) },
+            new Review { ReviewerName = "Jonas",  Comment = "Moving.",        Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-2) },
+            new Review { ReviewerName = "Karin",  Comment = "Brilliant.",     Rating = 4, CreatedAt = DateTime.UtcNow.AddDays(-1) }
         }
     },
     new()
@@ -2750,19 +2756,82 @@ public class MovieServiceTests
 
 ### Step 29: Add CreatedAt to Review
 
-The trimmer removes the *oldest* reviews, so `Review` needs a timestamp (ADR 0004). Builds on Step 24.
+> The trimmer (Step 30) removes the **oldest** reviews, so each `Review` needs a timestamp to order by
+> (ADR 0004, builds on Step 24). Three parts: the field + migration, **staggered** seed values (so
+> "oldest" is meaningful and the trimmer has a real target), and surfacing it on the read DTO so you can
+> actually see it.
+
+**29.1 — Add the field and migrate.**
 
 ```csharp
 // MovieCore/Models/Review.cs
 public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 ```
 
+> `= DateTime.UtcNow` is a **C# initializer, not a SQL default**: new reviews (API or seed) get a real
+> timestamp at construction, but it doesn't back-fill existing rows. `ReviewService.CreateAsync` builds
+> `new Review { … }` without touching `CreatedAt`, so the **server** assigns it — a client can't set it.
+
 ```bash
 dotnet ef migrations add ReviewCreatedAt --project MovieData --startup-project MovieApi
-dotnet ef database update --project MovieData --startup-project MovieApi
 ```
 
-**Verify:** new reviews persist a `CreatedAt`; seed sets sensible values.
+Because 29.2 changes the seed (and the new column doesn't back-fill old rows with sensible values),
+**drop and re-seed** rather than just `database update`:
+
+```bash
+dotnet ef database drop -f --project MovieData --startup-project MovieApi
+dotnet run --project MovieApi
+```
+
+**29.2 — Give an old movie 8 staggered reviews (folded into Step 22.1).**
+The trimmer targets movies **>20 years old with >5 reviews** — but no seeded movie qualified (the old
+ones had ≤3 reviews; Her has 9 but is recent). Make **The Shawshank Redemption** (1994, movie 2) the
+target by seeding **8 reviews with explicit, decreasing `CreatedAt`**, so the 5 newest are deterministic
+and the trimmer removes the oldest 3. Replace Shawshank's `Reviews` block (shown in 29 here; it lives in
+the Step 22.1 seed):
+
+```csharp
+// MovieData/Extensions/SeedDataExtensions.cs — Shawshank's Reviews (8, oldest → newest)
+Reviews =
+{
+    new Review { ReviewerName = "Cara",   Comment = "Masterpiece.",   Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-8) },
+    new Review { ReviewerName = "Dan",    Comment = "Hopeful.",       Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-7) },
+    new Review { ReviewerName = "Eve",    Comment = "Slow start.",    Rating = 3, CreatedAt = DateTime.UtcNow.AddDays(-6) },
+    new Review { ReviewerName = "Greta",  Comment = "Unforgettable.", Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-5) },
+    new Review { ReviewerName = "Hans",   Comment = "A classic.",     Rating = 4, CreatedAt = DateTime.UtcNow.AddDays(-4) },
+    new Review { ReviewerName = "Ingrid", Comment = "Powerful.",      Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-3) },
+    new Review { ReviewerName = "Jonas",  Comment = "Moving.",        Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-2) },
+    new Review { ReviewerName = "Karin",  Comment = "Brilliant.",     Rating = 4, CreatedAt = DateTime.UtcNow.AddDays(-1) }
+}
+```
+
+> Other movies' reviews keep the default `CreatedAt` (set by the initializer) — only the trimmer's target
+> needs staggering. Seeding 8 reviews on an old movie deliberately exceeds the 5-review **write** cap from
+> Step 24: that cap guards new POSTs, not seed data, and clearing this backlog is exactly the trimmer's
+> job in Step 30.
+
+**29.3 — Surface `CreatedAt` on the read DTO (so the verify is checkable via the API).**
+
+```csharp
+// MovieCore/DTOs/ReviewDto.cs  (add — output only; create ignores it)
+public DateTime CreatedAt { get; set; }
+```
+
+```csharp
+// MovieServices/ReviewService.cs — in GetByMovieIdAsync's Select, add the field
+CreatedAt = r.CreatedAt,
+```
+
+```csharp
+// MovieServices/MovieService.cs — in GetDetailsAsync's Reviews Select, add the field
+CreatedAt = r.CreatedAt,
+```
+
+**Verify:**
+- `GET /api/movies/2/reviews` → 8 reviews, each with a distinct `createdAt`; oldest is Cara (~8 days ago).
+- `GET /api/movies/1/reviews` (Forrest Gump) → `createdAt` ≈ seed time (default initializer).
+
 **Commit:** `feat(core): timestamp reviews with CreatedAt`
 
 ### Step 30: Add the idempotent review-trimmer background service
