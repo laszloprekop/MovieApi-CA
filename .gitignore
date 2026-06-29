@@ -372,3 +372,6 @@ FodyWeavers.xsd
 
 # macOS (also covered by global excludes, kept here for portability)
 .DS_Store
+
+# Claude Code project skills (installed locally, not versioned with the repo)
+.claude/skills/
