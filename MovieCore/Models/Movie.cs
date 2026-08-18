@@ -14,7 +14,10 @@
         // 1:M One movie has many reviews, but a review belongs to one movie
         public ICollection<Review> Reviews { get; set; } = new List<Review>();
 
-        //N:M many to many via implicit join table MovieActor
+        // N:M many to many  - the join is the explicit entity MovieActor.
+        // Two roads to the same destination, Actor for "who is in it",
+        // Cast when the role on the relationship matters.
         public ICollection<Actor> Actors { get; set; } = new List<Actor>();
+        public ICollection<MovieActor> Cast { get; set; } = new List<MovieActor>();
     }
 }
