@@ -46,7 +46,7 @@ public static class SeedDataExtensions
             {
                 Title = "Forrest Gump", Year = 1994, Duration = 142,
                 Genres = { drama },
-                Actors = { hanks },
+                Cast = { new() { Actor = hanks, Role = "Forrest Gump" } },
                 Details = new MovieDetails
                     { Synopsis = "Life is like a box of chocolates", Language = "English", Budget = 55_000_000m },
                 Reviews =
@@ -59,7 +59,11 @@ public static class SeedDataExtensions
             {
                 Title = "The Shawshank Redemption", Year = 1994, Duration = 142,
                 Genres = { drama },
-                Actors = { robbins, freeman },
+                Cast =
+                {
+                    new() { Actor = robbins, Role = "Andy Dufresne" },
+                    new() { Actor = freeman, Role = "Ellis 'Red' Redding" }
+                },
                 Reviews =
                 {
                     new Review { ReviewerName = "Cara",   Comment = "Masterpiece.",   Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-8) },
@@ -83,7 +87,7 @@ public static class SeedDataExtensions
             {
                 Title = "Groundhog Day", Year = 1993, Duration = 101,
                 Genres = { comedy },
-                Actors = { murray }
+                Cast = { new() { Actor = murray, Role = "Phil Connors" } }
                 // no reviews — exercises the zero-review case
             },
             new()
@@ -98,7 +102,7 @@ public static class SeedDataExtensions
             {
                 Title = "Her", Year = 2013, Duration = 126,
                 Genres = { drama, sciFi },
-                Actors = { johansson },
+                Cast = { new() { Actor = johansson, Role = "Samantha (voice)" } },
                 // 9 reviews — recent movie (2013), so the 10-cap applies; one more POST hits 10, the next 400s
                 Reviews =
                 {

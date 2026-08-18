@@ -17,7 +17,7 @@ public class MovieRepository(MovieContext context) : IMovieRepository
     public Task<Movie?> GetWithDetailsAsync(int id) => context.Movies
         .Include(m => m.Details)
         .Include(m => m.Reviews)
-        .Include(m => m.Actors)
+        .Include(m => m.Cast).ThenInclude(ma => ma.Actor)
         .Include(m => m.Genres)
         .FirstOrDefaultAsync(m => m.Id == id);
 

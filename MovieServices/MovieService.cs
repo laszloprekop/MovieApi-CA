@@ -68,9 +68,9 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
             {
                 Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating, CreatedAt = r.CreatedAt
             }).ToList(),
-            Actors = movie.Actors.Select(a => new ActorDto
+            Actors = movie.Cast.Select(ma => new MovieActorDto
             {
-                Id = a.Id, Name = a.Name, BirthYear = a.BirthYear
+                Id = ma.ActorId, Name = ma.Actor.Name, BirthYear = ma.Actor.BirthYear, Role = ma.Role
             }).ToList()
         };
     }
