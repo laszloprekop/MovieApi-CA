@@ -48,9 +48,9 @@ public class ActorsController(IServiceManager services) : ControllerBase
 
     // Post /api/movies/{movieIde}/actors/{actorId} - add actor to movie, N:M
     [HttpPost("movies/{movieId:int}/actors/{actorId:int}")]
-    public async Task<IActionResult> AddActorToMovie(int movieId, int actorId)
+    public async Task<IActionResult> AddActorToMovie(int movieId, int actorId, ActorRoleDto dto)
     {
-        var result = await services.ActorService.AddToMovieAsync(movieId, actorId);
+        var result = await services.ActorService.AddToMovieAsync(movieId, actorId, dto.Role);
         if (!result.IsSuccess) return ToProblem(result);
         return NoContent();
     }

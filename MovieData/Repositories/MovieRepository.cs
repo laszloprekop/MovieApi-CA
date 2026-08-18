@@ -21,10 +21,10 @@ public class MovieRepository(MovieContext context) : IMovieRepository
         .Include(m => m.Genres)
         .FirstOrDefaultAsync(m => m.Id == id);
 
-    public Task<Movie?> GetWithActorsAsync(int MovieId) => context.Movies
-        .Include(m => m.Actors)
+    public Task<Movie?> GetWithCastAsync(int movieId) => context.Movies
+        .Include(m => m.Cast)
         .Include(m => m.Genres)
-        .FirstOrDefaultAsync(m => m.Id == MovieId);
+        .FirstOrDefaultAsync(m => m.Id == movieId);
 
     public void Add(Movie movie) => context.Movies.Add(movie);
     public void Update(Movie movie) => context.Movies.Update(movie);

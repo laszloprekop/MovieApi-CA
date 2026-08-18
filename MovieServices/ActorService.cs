@@ -51,20 +51,20 @@ public class ActorService(IUnitOfWork uow) : IActorService
         return Result.Success();
     }
 
-    public async Task<Result> AddToMovieAsync(int movieId, int actorId)
+    public async Task<Result> AddToMovieAsync(int movieId, int actorId, string? role)
     {
-        var movie = await uow.Movies.GetWithActorsAsync(movieId);
+        var movie = await uow.Movies.GetWithCastAsync(movieId);
         if (movie is null) return Result.NotFound($"Movie {movieId} not found");
         var actor = await uow.Actors.GetAsync(actorId);
         if (actor is null) return Result.NotFound($"Actor {actorId} not found");
 
-        if (movie.Actors.Any(a => a.Id == actorId))
+        if (movie.Cast.Any(ma => ma.ActorId == actorId))
             return Result.BusinessRule($"Actor {actorId} is already in movie {movieId}.");
 
-        if (MovieRules.IsDocumentary(movie) && movie.Actors.Count >= 10)
+        if (MovieRules.IsDocumentary(movie) && movie.Cast.Count >= 10)
             return Result.BusinessRule("A documentary can only have 10 actors.");
 
-        movie.Actors.Add(actor);
+        movie.Cast.Add(new MovieActor { ActorId = actorId, Role = role });
         await uow.CompleteAsync();
         return Result.Success();
     }

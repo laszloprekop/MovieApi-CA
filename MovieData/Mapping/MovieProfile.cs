@@ -21,6 +21,7 @@ public class MovieProfile : Profile
             .ForMember(d => d.Details, o => o.Ignore())
             .ForMember(d => d.Reviews, o => o.Ignore())
             .ForMember(d => d.Actors, o => o.Ignore())
+            .ForMember(d => d.Cast, o => o.Ignore())
             .ForMember(d => d.Genres, o => o.Ignore());
     }
 }

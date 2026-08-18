@@ -21,7 +21,7 @@ internal static class TestData
         if (documentary) movie.Genres.Add(new Genre { Name = Genres.Documentary });
         for (var i = 0; i < count; i++)
         {
-            movie.Actors.Add(new Actor { Id = i, Name = $"A{i}" });
+            movie.Cast.Add(new MovieActor { ActorId = i, Actor = new Actor { Id = i, Name = $"A{i}" } });
         }
 
         return movie;

@@ -11,11 +11,11 @@ public class ActorServiceTests
     public async Task AddToMovieAsync_DocumentaryAt10Actors_ReturnBusinessRule()
     {
         var uow = Substitute.For<IUnitOfWork>();
-        uow.Movies.GetWithActorsAsync(5).Returns(TestData.MovieWithActors(10, documentary: true));
+        uow.Movies.GetWithCastAsync(5).Returns(TestData.MovieWithActors(10, documentary: true));
         uow.Actors.GetAsync(99).Returns(new Actor { Id = 99, Name = "New" });
         var sut = new ActorService(uow);
 
-        var result = await sut.AddToMovieAsync(5, 99);
+        var result = await sut.AddToMovieAsync(5, 99, "Narrator");
         Assert.False(result.IsSuccess);
         Assert.Equal(ErrorType.BusinessRule, result.ErrorType);
 
@@ -26,13 +26,28 @@ public class ActorServiceTests
     public async Task AddToMovieAsync_NonDocumentaryAt10Actors_Saves()
     {
         var uow = Substitute.For<IUnitOfWork>();
-        uow.Movies.GetWithActorsAsync(1).Returns(TestData.MovieWithActors(10, documentary: false));
+        uow.Movies.GetWithCastAsync(1).Returns(TestData.MovieWithActors(10, documentary: false));
         uow.Actors.GetAsync(99).Returns(new Actor { Id = 99, Name = "New" });
         var sut = new ActorService(uow);
 
-        var result = await sut.AddToMovieAsync(1, 99);
+        var result = await sut.AddToMovieAsync(1, 99, null);
 
         Assert.True(result.IsSuccess);
         await uow.Received(1).CompleteAsync(); // and it persisted
+    }
+
+    [Fact]
+    public async Task AddToMovieAsync_StoresRoleOnTheJoin()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        var movie = TestData.MovieWithActors(1, documentary: false);
+        uow.Movies.GetWithCastAsync(1).Returns(movie);
+        uow.Actors.GetAsync(99).Returns(new Actor { Id = 99, Name = "New" });
+        var sut = new ActorService(uow);
+
+        var result = await sut.AddToMovieAsync(1, 99, "Huvudskurk");
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Huvudskurk", movie.Cast.Single(ma => ma.ActorId == 99).Role);
     }
 }
