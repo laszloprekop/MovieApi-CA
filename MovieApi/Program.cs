@@ -25,6 +25,16 @@ builder.Services.AddControllers()
     .AddApplicationPart(typeof(MoviePresentation.PresentationAssemblyReference).Assembly)
     .AddNewtonsoftJson();
 
+// !! Browsers only hand responses to cross-origin JS if we opt in per origin.
+// -> Origins live in configuration so the hosted instance can add its own via env.
+
+var clientOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
+    .WithOrigins(clientOrigins)
+    .AllowAnyHeader()
+    .AllowAnyMethod()
+    .WithExposedHeaders("X-Pagination")));
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
@@ -42,6 +52,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseCors();
 
 app.UseAuthorization();
 
