@@ -44,8 +44,17 @@ public class ReviewService(IUnitOfWork uow) : IReviewService
         };
         uow.Reviews.Add(review);
         await uow.CompleteAsync();
-        dto.Id = review.Id;
-        return dto;
+
+        // Map from the stored entity, not the incoming dto — the entity holds
+        // the server-set CreatedAt; the input's default would echo year 0001.
+        return new ReviewDto
+        {
+            Id = review.Id,
+            ReviewerName = review.ReviewerName,
+            Comment = review.Comment,
+            Rating = review.Rating,
+            CreatedAt = review.CreatedAt,
+        };
     }
 
     public async Task DeleteAsync(int id)
