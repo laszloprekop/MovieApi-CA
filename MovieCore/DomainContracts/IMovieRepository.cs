@@ -9,6 +9,7 @@ public interface IMovieRepository
     Task<bool> AnyAsync(int id);
     Task<Movie?> GetWithDetailsAsync(int id);
     Task<Movie?> GetWithCastAsync(int MovieId);
+    Task<IEnumerable<Movie>> GetAllForReportsAsync();
     void Add(Movie movie);
     void Update(Movie movie);
     void Remove(Movie movie);

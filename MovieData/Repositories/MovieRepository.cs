@@ -26,6 +26,15 @@ public class MovieRepository(MovieContext context) : IMovieRepository
         .Include(m => m.Genres)
         .FirstOrDefaultAsync(m => m.Id == movieId);
 
+    // Reports read everything: genres for grouping, reviews for averages,
+    // actors for activity counts. One round-trip, no lazy surprises.
+    public async Task<IEnumerable<Movie>> GetAllForReportsAsync() =>
+        await context.Movies
+            .Include(m => m.Genres)
+            .Include(m => m.Reviews)
+            .Include(m => m.Actors)
+            .ToListAsync();
+
     public void Add(Movie movie) => context.Movies.Add(movie);
     public void Update(Movie movie) => context.Movies.Update(movie);
     public void Remove(Movie movie) => context.Movies.Remove(movie);
