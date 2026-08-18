@@ -21,6 +21,22 @@ public class MovieServiceTests
     }
 
     [Fact]
+    public async Task GetPageAsync_TitleFragment_FiltersCaseInsensitively()
+    {
+        var uow = Substitute.For<IUnitOfWork>();
+        uow.Movies.GetAllAsync().Returns(
+        [
+            new Movie { Id = 1, Title = "The Shawshank Redemption" },
+            new Movie { Id = 2, Title = "Forrest Gump" },
+        ]);
+        var sut = new MovieService(uow, Substitute.For<IMapper>());
+
+        var page = await sut.GetPageAsync("shaw", null, null, null, new PaginationParameters());
+
+        Assert.Equal(1, page.Meta.TotalCount);
+    }
+
+    [Fact]
     public async Task GetAsync_MissingId_ThrowsNotFound()
     {
         var uow = Substitute.For<IUnitOfWork>();

@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+.git/
+.idea/
+docs/
+materials/
+qodana.yaml

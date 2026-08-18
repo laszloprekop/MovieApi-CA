@@ -14,12 +14,13 @@ public class MoviesController(IServiceManager services) : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<MovieDto>>> GetMovies(
+        [FromQuery] string? title,
         [FromQuery] string? genre,
         [FromQuery] int? year,
         [FromQuery] string? actor,
         [FromQuery] PaginationParameters paging)
     {
-        var page = await services.MovieService.GetPageAsync(genre, year, actor, paging);
+        var page = await services.MovieService.GetPageAsync(title, genre, year, actor, paging);
         Response.Headers["X-Pagination"] = JsonSerializer.Serialize(page.Meta);
         return Ok(page.Data);
     }

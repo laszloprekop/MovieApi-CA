@@ -9,8 +9,12 @@ namespace MovieServices;
 
 public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
 {
-    private static IEnumerable<Movie> ApplyFilters(IEnumerable<Movie> movies, string? genre, int? year, string? actor)
+    private static IEnumerable<Movie> ApplyFilters(IEnumerable<Movie> movies, string? title, string? genre,
+        int? year, string? actor)
     {
+        // Contains, not Equals: a search box sends fragments ("shaw"), not exact titles.
+        if (!string.IsNullOrWhiteSpace(title))
+            movies = movies.Where(m => m.Title.Contains(title, StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(genre))
             movies = movies.Where(m =>
                 m.Genres.Any(g => string.Equals(g.Name, genre, StringComparison.OrdinalIgnoreCase)));
@@ -21,13 +25,13 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
         return movies;
     }
 
-    public async Task<IEnumerable<MovieDto>> GetAllAsync(string? genre, int? year, string? actor) =>
-        mapper.Map<IEnumerable<MovieDto>>(ApplyFilters(await uow.Movies.GetAllAsync(), genre, year, actor));
+    public async Task<IEnumerable<MovieDto>> GetAllAsync(string? title, string? genre, int? year, string? actor) =>
+        mapper.Map<IEnumerable<MovieDto>>(ApplyFilters(await uow.Movies.GetAllAsync(), title, genre, year, actor));
 
-    public async Task<PagedResult<MovieDto>> GetPageAsync(string? genre, int? year, string? actor,
+    public async Task<PagedResult<MovieDto>> GetPageAsync(string? title, string? genre, int? year, string? actor,
         PaginationParameters paging)
     {
-        var movies = ApplyFilters(await uow.Movies.GetAllAsync(), genre, year, actor);
+        var movies = ApplyFilters(await uow.Movies.GetAllAsync(), title, genre, year, actor);
 
         var enumerable = movies as Movie[] ?? movies.ToArray();
         var total = enumerable.Count();
