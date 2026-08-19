@@ -64,6 +64,8 @@ public static class SeedDataExtensions
                     new() { Actor = robbins, Role = "Andy Dufresne" },
                     new() { Actor = freeman, Role = "Ellis 'Red' Redding" }
                 },
+                Details = new MovieDetails
+                    { Synopsis = "The story of a banker who spends nineteen years in Shawshank prison for a murder he did not commit, and of the redemption he finds in friendship.", Language = "English", Budget = 25_000_000m },
                 Reviews =
                 {
                     new Review { ReviewerName = "Cara",   Comment = "Masterpiece.",   Rating = 5, CreatedAt = DateTime.UtcNow.AddDays(-8) },
@@ -81,13 +83,17 @@ public static class SeedDataExtensions
                 Title = "Lost in Translation", Year = 2003, Duration = 102,
                 Genres = { drama, comedy },
                 Actors = { johansson, murray },
+                Details = new MovieDetails
+                    { Synopsis = "An aging movie star and a young wife drift through Tokyo nights, lost between time zones and marriages, sharing something neither can quite translate.", Language = "English", Budget = 4_000_000m },
                 Reviews = { new Review { ReviewerName = "Finn", Comment = "Quietly great.", Rating = 4 } }
             },
             new()
             {
                 Title = "Groundhog Day", Year = 1993, Duration = 101,
                 Genres = { comedy },
-                Cast = { new() { Actor = murray, Role = "Phil Connors" } }
+                Cast = { new() { Actor = murray, Role = "Phil Connors" } },
+                Details = new MovieDetails
+                    { Synopsis = "A cynical TV weatherman covering the annual Groundhog Day festivities in Punxsutawney wakes up to the same day, over and over, until he gets it right.", Language = "English", Budget = 14_600_000m }
                 // no reviews — exercises the zero-review case
             },
             new()
@@ -96,6 +102,8 @@ public static class SeedDataExtensions
                 Genres = { documentary },
                 // 10 actors — at the Documentary cap, so an 11th POST → 400
                 Actors = { freeman, attenborough, herzog, weaver, jones, irons, mirren, neeson, blanchett, elba },
+                Details = new MovieDetails
+                    { Synopsis = "Every winter, thousands of emperor penguins march across the Antarctic ice to their breeding grounds, each pair guarding a single egg through the polar night.", Language = "French", Budget = 8_000_000m },
                 Reviews = { new Review { ReviewerName = "Gil", Comment = "Beautiful.", Rating = 4 } }
             },
             new()
@@ -103,6 +111,8 @@ public static class SeedDataExtensions
                 Title = "Her", Year = 2013, Duration = 126,
                 Genres = { drama, sciFi },
                 Cast = { new() { Actor = johansson, Role = "Samantha (voice)" } },
+                Details = new MovieDetails
+                    { Synopsis = "In a near-future Los Angeles, a lonely writer falls for Samantha, an operating system with a voice all her own.", Language = "English", Budget = 23_000_000m },
                 // 9 reviews — recent movie (2013), so the 10-cap applies; one more POST hits 10, the next 400s
                 Reviews =
                 {
