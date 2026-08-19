@@ -2,6 +2,10 @@
 
 A Web API for a film catalogue, built as a Clean Architecture solution on .NET 10. It serves movies, their details, genres, reviews, and actors, and enforces a small set of business rules in one place (the service layer).
 
+It is **deployed** at `https://movieapi.dentaku.se` on a Coolify-managed VPS, where it powers the
+[Movie App Mega X-Treme 3000](https://github.com/laszloprekop/fe-11-movie-app) React client
+([live demo](https://laszloprekop.github.io/fe-11-movie-app/)) — see [Deployment](#deployment).
+
 It was developed for an **optional assignment** in the LTU (Luleå University of Technology) / Lexicon .NET course — the "MovieAPI" continuation exercise (*Övning 6*), which refactors an earlier single-project Web API into a layered Clean Architecture solution. Being optional, it was used as a deliberate opportunity to practise the full workflow end to end rather than just meet the minimum requirements.
 
 This repository also documents its own **LLM-supported development process**: the build is recorded as a chronological timeline of small, verified steps in [`docs/coding-steps.md`](docs/coding-steps.md), so the history of how the application took shape — the order things were done, what broke, and how it was corrected — is captured alongside the code (see [Development process](#development-process)).
@@ -10,10 +14,14 @@ This repository also documents its own **LLM-supported development process**: th
 
 ## Features
 
-- CRUD for movies, plus filtering by genre, year, and actor.
+- CRUD for movies, plus filtering by title fragment (case-insensitive contains), genre, year, and actor.
 - Movie details (synopsis, language, budget) as a separate one-to-one entity.
 - Genres modelled as a many-to-many relationship.
-- Reviews and actors per movie; reviews carry a server-set `CreatedAt` timestamp.
+- Actors per movie through an explicit join entity (`MovieActor`) that carries the **role** —
+  the payload lives on the relationship, not on either end.
+- Reviews per movie, carrying a server-set `CreatedAt` timestamp.
+- A reports endpoint with server-side aggregates for the client's dashboard
+  (average rating, top movies per genre, most active actors).
 - A background hosted service that idempotently trims the oldest reviews once a movie exceeds its cap.
 - Paging with an `X-Pagination` response header.
 - `PATCH` for a movie and its details via a flat JSON Patch document.
@@ -27,10 +35,11 @@ This repository also documents its own **LLM-supported development process**: th
 ## Tech stack
 
 - **C# / .NET 10**, ASP.NET Core Web API
-- **EF Core 10** with SQL Server (LocalDB by default)
+- **EF Core 10** with SQL Server (LocalDB by default; a SQL Server container in deployment)
 - **AutoMapper** for entity ↔ DTO mapping
 - **xUnit + NSubstitute** for tests
 - **OpenAPI** for API description (Development only)
+- **Docker** (multi-stage image) · **GitHub Actions → GHCR** · **Coolify + Traefik** for hosting
 
 ---
 
@@ -63,6 +72,7 @@ The vocabulary below is the shared language used across the code, the seed data,
 - **Documentary** — a specific genre with extra caps on actors and budget. A movie is a Documentary when "Documentary" is among its genres. The name lives once, as a domain constant.
 - **Review** — a viewer's rating (1–5) and comment on one movie, with a creation time.
 - **Actor** — a person who appears in movies. Many-to-many with Movie; the same actor cannot be added to the same movie twice.
+- **Role** — the part an actor plays in one specific movie. It belongs to the relationship, so it lives on the explicit join entity (**MovieActor**), reachable both through the skip navigation (`Movie.Actors`) and through the role-aware road (`Movie.Cast`).
 
 ---
 
@@ -120,6 +130,11 @@ The API starts on `http://localhost:5102`. In Development, the OpenAPI document 
 | `ConnectionStrings:DefaultConnection` | `MovieApi/appsettings.json` | Database connection. Defaults to LocalDB, database `MovieDb`. |
 | `AutoMapper:LicenseKey` | user-secrets (or environment) | Required by AutoMapper. Kept out of source control. |
 
+Every setting can be overridden by an environment variable (`:` becomes `__`). That is how
+the API runs everywhere LocalDB does not exist: on macOS, `ConnectionStrings__DefaultConnection`
+points `dotnet run` at a SQL Server container; in deployment, the same variable on the Coolify
+resource points the container at its sibling database.
+
 The default connection string is:
 
 ```
@@ -157,19 +172,26 @@ The tests cover the service layer in isolation — `IUnitOfWork` and its reposit
 
 [`MovieApi/MovieApi.http`](MovieApi/MovieApi.http) contains ready-to-run requests for every endpoint, including the rule-violation cases (each with the expected status code in a comment). Open it in an HTTP client that supports `.http` files (Visual Studio, VS Code REST Client, or JetBrains Rider) and send requests against a running instance.
 
-A few representative endpoints:
+A few representative endpoints — the **Live** column hits the deployed API, so the JSON is
+one click away (`GET` only; the write endpoints need an HTTP client):
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/api/movies?genre=&year=&actor=&page=&pageSize=` | List/filter/page movies |
-| `GET` | `/api/movies/{id}` | One movie |
-| `GET` | `/api/movies/{id}/details` | Movie with details, reviews, actors |
-| `POST` | `/api/movies` | Create a movie (requires `genreIds`) |
-| `PUT` | `/api/movies/{id}` | Update a movie |
-| `PATCH` | `/api/movies/{id}` | Patch movie + details (JSON Patch) |
-| `DELETE` | `/api/movies/{id}` | Delete a movie |
-| `POST` | `/api/movies/{movieId}/actors/{actorId}` | Assign an actor |
-| `GET`/`POST` | `/api/movies/{movieId}/reviews` | List / add reviews |
+| Method | Route | Description | Live |
+|---|---|---|---|
+| `GET` | `/api/movies?title=&genre=&year=&actor=&page=&pageSize=` | List/filter/page movies (`title` is a contains-search) | [all](https://movieapi.dentaku.se/api/movies) · [filtered](https://movieapi.dentaku.se/api/movies?title=shaw&genre=Drama) |
+| `GET` | `/api/movies/{id}` | One movie | [movies/1](https://movieapi.dentaku.se/api/movies/1) |
+| `GET` | `/api/movies/{id}/details` | Movie with details, reviews, actors (with roles) | [movies/2/details](https://movieapi.dentaku.se/api/movies/2/details) |
+| `POST` | `/api/movies` | Create a movie (requires `genreIds`) | — |
+| `PUT` | `/api/movies/{id}` | Update a movie | — |
+| `PATCH` | `/api/movies/{id}` | Patch movie + details (JSON Patch) | — |
+| `DELETE` | `/api/movies/{id}` | Delete a movie | — |
+| `POST` | `/api/movies/{movieId}/actors/{actorId}` | Assign an actor, body `{ "role": "…" }` | — |
+| `GET`/`POST` | `/api/movies/{movieId}/reviews` | List / add reviews | [movies/2/reviews](https://movieapi.dentaku.se/api/movies/2/reviews) |
+| `GET` | `/api/genres` | The genre list | [genres](https://movieapi.dentaku.se/api/genres) |
+| `GET` | `/api/reports/dashboard` | Server-side aggregates for the dashboard | [dashboard](https://movieapi.dentaku.se/api/reports/dashboard) |
+
+There is no hosted documentation page yet: the OpenAPI document is served in Development
+only. Publishing it on the deployed instance is planned for when the API gets
+authentication — a docs page and an auth story belong together on a publicly writable API.
 
 ---
 
@@ -177,6 +199,8 @@ A few representative endpoints:
 
 ```
 MovieApi-CA/
+├─ .github/workflows/    # build-image.yml — tests, then Docker image → GHCR
+├─ Dockerfile            # multi-stage: SDK builds, runtime image ships
 ├─ MovieCore/            # entities, DTOs, domain contracts
 ├─ MovieData/            # EF Core context, repositories, UnitOfWork, mapping, migrations, seed
 ├─ MovieContracts/       # service interfaces + IServiceManager
@@ -190,6 +214,48 @@ MovieApi-CA/
 ├─ CONTEXT.md            # domain glossary
 └─ README.md
 ```
+
+---
+
+## Deployment
+
+The API runs at **`https://movieapi.dentaku.se`** and serves the deployed
+[React client](https://laszloprekop.github.io/fe-11-movie-app/). Two repos, two deploys,
+one system:
+
+```mermaid
+flowchart LR
+    dev([git push]) --> iw["Actions: image build<br/>tests gate the push"]
+    dev2([client push]) --> pw["Actions: Pages build<br/>VITE_API_URL baked at build time"]
+    pw --> pages["GitHub Pages<br/>React client"]
+    iw --> ghcr[("GHCR<br/>movieapi-ca:latest")]
+    ghcr -- "Coolify pulls" --> api
+    subgraph vps ["Hetzner VPS — Coolify"]
+        traefik["Traefik<br/>HTTPS for movieapi.dentaku.se"] --> api["MovieApi container<br/>:8080"]
+        api --> sql[("SQL Server container<br/>internal network only")]
+    end
+    browser((Browser)) --> pages
+    browser -- "fetch" --> traefik
+```
+
+How it fits together:
+
+- **The image is the deploy artifact.** [`build-image.yml`](.github/workflows/build-image.yml)
+  runs the tests, builds the multi-stage [`Dockerfile`](Dockerfile), and pushes
+  `ghcr.io/laszloprekop/movieapi-ca` as `:latest` plus a `:sha` tag (the rollback handle).
+  The VPS never builds code — Coolify pulls the image only.
+- **Traefik terminates HTTPS** at the proxy; the container itself listens on plain HTTP
+  `:8080` (the runtime image's default). The app's `UseHttpsRedirection` logs one harmless
+  warning about it.
+- **SQL Server** runs as a sibling container with a persistent volume and a memory cap,
+  reachable only over the internal Docker network — no public port. The API addresses it by
+  network alias.
+- **First boot migrates and seeds**: `Program.cs` applies the full migration chain and the
+  seeder fills an empty database, so a fresh environment assembles itself.
+- **Configuration travels as environment variables** on the Coolify resource:
+  `ConnectionStrings__DefaultConnection`, `AutoMapper__LicenseKey`,
+  `ASPNETCORE_ENVIRONMENT`. CORS origins ship in `appsettings.json` (the client's origins
+  are public information).
 
 ---
 
