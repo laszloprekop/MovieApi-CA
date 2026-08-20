@@ -102,7 +102,13 @@ public static class SeedDataExtensions
             {
                 Title = "Lost in Translation", Year = 2003, Duration = 102,
                 Genres = { drama, comedy },
-                Actors = { johansson, murray, ribisi, faris },
+                Cast =
+                {
+                    new() { Actor = murray, Role = "Bob Harris", Billing = 0 },
+                    new() { Actor = johansson, Role = "Charlotte", Billing = 1 },
+                    new() { Actor = ribisi, Role = "John", Billing = 2 },
+                    new() { Actor = faris, Role = "Kelly", Billing = 3 }
+                },
                 Details = new MovieDetails
                     { Synopsis = "An aging movie star and a young wife drift through Tokyo nights, lost between time zones and marriages, sharing something neither can quite translate.", Language = "English", Director = "Sofia Coppola", Budget = 4_000_000m },
                 Reviews = { new Review { ReviewerName = "Finn", Comment = "Quietly great.", Rating = 4 } }
@@ -489,8 +495,12 @@ public static class SeedDataExtensions
         {
             var movie = new Movie { Title = film.Title, Year = film.Year, Duration = film.Min };
             foreach (var name in film.Genres) movie.Genres.Add(genreByName[name]);
-            foreach (var (name, born, role) in film.Cast)
-                movie.Cast.Add(new MovieActor { Actor = ActorOf(name, born), Role = role });
+            for (var billing = 0; billing < film.Cast.Length; billing++)
+            {
+                var (name, born, role) = film.Cast[billing];
+                movie.Cast.Add(new MovieActor
+                    { Actor = ActorOf(name, born), Role = role, Billing = billing });
+            }
             movie.Details = new MovieDetails
             {
                 Synopsis = film.Synopsis,

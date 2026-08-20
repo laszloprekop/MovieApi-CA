@@ -69,7 +69,9 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
             {
                 Id = r.Id, ReviewerName = r.ReviewerName, Comment = r.Comment, Rating = r.Rating, CreatedAt = r.CreatedAt
             }).ToList(),
-            Actors = movie.Cast.Select(ma => new MovieActorDto
+            // billing order is a domain fact (the quiz's free clue leaks the
+            // LAST name); ActorId breaks ties for legacy rows with Billing 0
+            Actors = movie.Cast.OrderBy(ma => ma.Billing).ThenBy(ma => ma.ActorId).Select(ma => new MovieActorDto
             {
                 Id = ma.ActorId, Name = ma.Actor.Name, BirthYear = ma.Actor.BirthYear, Role = ma.Role
             }).ToList()
