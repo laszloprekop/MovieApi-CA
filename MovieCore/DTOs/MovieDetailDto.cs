@@ -13,6 +13,7 @@ namespace MovieCore.DTOs
         // flattened from the 1:1 MovieDetails
         public string? Synopsis { get; set; }
         public string? Language { get; set; }
+        public string? Director { get; set; }
         public decimal? Budget { get; set; }
         public List<ReviewDto> Reviews { get; set; } = new();
         public List<MovieActorDto> Actors { get; set; } = new();

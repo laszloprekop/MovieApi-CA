@@ -5,6 +5,7 @@
         public int Id { get; set; }
         public required string Synopsis { get; set; }
         public required string Language { get; set; }
+        public string? Director { get; set; }
         public decimal Budget { get; set; }
 
         // FK to Movie

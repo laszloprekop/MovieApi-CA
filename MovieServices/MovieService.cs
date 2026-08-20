@@ -63,6 +63,7 @@ public class MovieService(IUnitOfWork uow, IMapper mapper) : IMovieService
             Duration = movie.Duration,
             Synopsis = movie.Details?.Synopsis,
             Language = movie.Details?.Language,
+            Director = movie.Details?.Director,
             Budget = movie.Details?.Budget ?? 0,
             Reviews = movie.Reviews.Select(r => new ReviewDto
             {
